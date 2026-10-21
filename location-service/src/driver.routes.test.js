@@ -50,6 +50,49 @@ describe("POST /drivers", () => {
   });
 });
 
+describe("GET /drivers/:id", () => {
+    it("returns a driver when the ID exists", async () => {
+        const createResponse = await request(app)
+            .post("/drivers")
+            .send({
+                name: "GET Test Driver",
+                vehicleType: "CAR",
+            });
+
+        const driverId = createResponse.body.data.id;
+
+        try {
+            const response = await request(app)
+                .get(`/drivers/${driverId}`);
+
+            expect(response.status).toBe(200);
+            expect(response.body.data.id).toBe(driverId);
+            expect(response.body.data.name).toBe("GET Test Driver");
+        } finally {
+            await pool.query(
+                "DELETE FROM drivers WHERE id = $1",
+                [driverId]
+            );
+        }
+    });
+
+    it("returns 404 when the driver does not exist", async () => {
+        const response = await request(app)
+            .get("/drivers/00000000-0000-0000-0000-000000000000");
+
+        expect(response.status).toBe(404);
+        expect(response.body.error).toBe("Driver not found");
+    });
+
+    it("returns 400 when the driver ID is invalid", async () => {
+        const response = await request(app)
+            .get("/drivers/not-a-uuid");
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe("Invalid driver ID");
+    });
+});
+
 afterAll(async () => {
   await pool.end();
 });
