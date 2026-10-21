@@ -2,9 +2,11 @@ import { Router } from "express";
 import {
   createDriver,
   findDriverById,
+  updateDriverStatus,
 } from "../repositories/driver.repository.js";
 import { createDriverSchema } from "../validation/driver.schema.js";
 import { driverIdSchema } from "../validation/driver-id.schema.js";
+import { driverStatusSchema } from "../validation/driver-status.schema.js";
 
 const router = Router();
 
@@ -46,6 +48,43 @@ router.post("/", async (req, res) => {
   const driver = await createDriver(validation.data);
 
   return res.status(201).json({ data: driver });
+});
+
+router.patch("/:id/status", async (req, res) => {
+  const idValidation = driverIdSchema.safeParse(req.params.id);
+
+  if (!idValidation.success) {
+    return res.status(400).json({
+      error: "Invalid driver ID",
+    });
+  }
+
+  const statusValidation = driverStatusSchema.safeParse(req.body);
+
+  if (!statusValidation.success) {
+    return res.status(400).json({
+      error: "Invalid driver status",
+      details: statusValidation.error.issues.map((issue) => ({
+        field: issue.path.join("."),
+        message: issue.message,
+      })),
+    });
+  }
+
+  const driver = await updateDriverStatus(
+    idValidation.data,
+    statusValidation.data.status,
+  );
+
+  if (!driver) {
+    return res.status(404).json({
+      error: "Driver not found",
+    });
+  }
+
+  return res.status(200).json({
+    data: driver,
+  });
 });
 
 export default router;

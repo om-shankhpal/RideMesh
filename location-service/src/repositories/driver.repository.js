@@ -1,7 +1,7 @@
 import { pool } from "../config/database.js";
 
 export async function findDriverById(driverId) {
-    const query = `
+  const query = `
         SELECT
             id,
             name,
@@ -13,12 +13,13 @@ export async function findDriverById(driverId) {
         WHERE id = $1
     `;
 
-    const result = await pool.query(query, [driverId]);
+  const result = await pool.query(query, [driverId]);
 
-    return result.rows[0] ?? null;
+  return result.rows[0] ?? null;
 }
+
 export async function createDriver({ name, vehicleType }) {
-    const query = `
+  const query = `
         INSERT INTO drivers (name, vehicle_type)
         VALUES ($1, $2)
         RETURNING
@@ -30,9 +31,32 @@ export async function createDriver({ name, vehicleType }) {
             updated_at
     `;
 
-    const values = [name, vehicleType];
+  const values = [name, vehicleType];
 
-    const result = await pool.query(query, values);
+  const result = await pool.query(query, values);
 
-    return result.rows[0];
+  return result.rows[0];
+}
+
+export async function updateDriverStatus(driverId, status) {
+  const query = `
+        UPDATE drivers
+        SET
+            status = $1,
+            updated_at = NOW()
+        WHERE id = $2
+        RETURNING
+            id,
+            name,
+            vehicle_type,
+            status,
+            created_at,
+            updated_at
+    `;
+
+  const values = [status, driverId];
+
+  const result = await pool.query(query, values);
+
+  return result.rows[0] ?? null;
 }

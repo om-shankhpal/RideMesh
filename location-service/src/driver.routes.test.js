@@ -50,6 +50,7 @@ describe("POST /drivers", () => {
   });
 });
 
+
 describe("GET /drivers/:id", () => {
     it("returns a driver when the ID exists", async () => {
         const createResponse = await request(app)
@@ -90,6 +91,62 @@ describe("GET /drivers/:id", () => {
 
         expect(response.status).toBe(400);
         expect(response.body.error).toBe("Invalid driver ID");
+    });
+});
+
+
+describe("PATCH /drivers/:id/status", () => {
+    it("updates a driver's status", async () => {
+        const createResponse = await request(app)
+            .post("/drivers")
+            .send({
+                name: "Status Test Driver",
+                vehicleType: "BIKE",
+            });
+
+        const driverId = createResponse.body.data.id;
+
+        try {
+            const response = await request(app)
+                .patch(`/drivers/${driverId}/status`)
+                .send({ status: "AVAILABLE" });
+
+            expect(response.status).toBe(200);
+            expect(response.body.data.id).toBe(driverId);
+            expect(response.body.data.status).toBe("AVAILABLE");
+        } finally {
+            await pool.query(
+                "DELETE FROM drivers WHERE id = $1",
+                [driverId]
+            );
+        }
+    });
+
+    it("rejects an invalid driver status", async () => {
+        const response = await request(app)
+            .patch("/drivers/00000000-0000-0000-0000-000000000000/status")
+            .send({ status: "BUSY" });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe("Invalid driver status");
+    });
+
+    it("rejects an invalid driver ID", async () => {
+        const response = await request(app)
+            .patch("/drivers/not-a-uuid/status")
+            .send({ status: "AVAILABLE" });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe("Invalid driver ID");
+    });
+
+    it("returns 404 when the driver does not exist", async () => {
+        const response = await request(app)
+            .patch("/drivers/00000000-0000-0000-0000-000000000000/status")
+            .send({ status: "AVAILABLE" });
+
+        expect(response.status).toBe(404);
+        expect(response.body.error).toBe("Driver not found");
     });
 });
 
