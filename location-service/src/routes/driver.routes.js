@@ -71,19 +71,27 @@ router.patch("/:id/status", async (req, res) => {
     });
   }
 
-  const driver = await updateDriverStatus(
+  const result = await updateDriverStatus(
     idValidation.data,
     statusValidation.data.status,
   );
 
-  if (!driver) {
+  if (result.type === "not_found") {
     return res.status(404).json({
       error: "Driver not found",
     });
   }
 
+  if (result.type === "invalid_transition") {
+    return res.status(409).json({
+      error: "Invalid driver status transition",
+      currentStatus: result.currentStatus,
+      requestedStatus: statusValidation.data.status,
+    });
+  }
+
   return res.status(200).json({
-    data: driver,
+    data: result.driver,
   });
 });
 

@@ -38,13 +38,20 @@ export async function createDriver({ name, vehicleType }) {
   return result.rows[0];
 }
 
+
 export async function updateDriverStatus(driverId, status) {
-  const query = `
+    const query = `
         UPDATE drivers
         SET
             status = $1,
             updated_at = NOW()
         WHERE id = $2
+          AND (
+              (status = 'OFFLINE' AND $1 = 'AVAILABLE')
+              OR (status = 'AVAILABLE' AND $1 = 'ON_TRIP')
+              OR (status = 'ON_TRIP' AND $1 = 'AVAILABLE')
+              OR (status = 'AVAILABLE' AND $1 = 'OFFLINE')
+          )
         RETURNING
             id,
             name,
@@ -54,9 +61,19 @@ export async function updateDriverStatus(driverId, status) {
             updated_at
     `;
 
-  const values = [status, driverId];
+    const values = [status, driverId];
 
-  const result = await pool.query(query, values);
+    const result = await pool.query(query, values);
 
-  return result.rows[0] ?? null;
+    if (result.rows[0]) {
+        return { type: "updated", driver: result.rows[0] };
+    }
+
+    const existingDriver = await findDriverById(driverId);
+
+    if (!existingDriver) {
+        return { type: "not_found" };
+    }
+
+    return { type: "invalid_transition", currentStatus: existingDriver.status };
 }
