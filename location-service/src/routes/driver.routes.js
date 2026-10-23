@@ -9,30 +9,11 @@ import { driverIdSchema } from "../validation/driver-id.schema.js";
 import { driverStatusSchema } from "../validation/driver-status.schema.js";
 import { driverLocationSchema } from "../validation/driver-location.schema.js";
 import { saveDriverLocation } from "../repositories/driver-location.repository.js";
+import { nearbyDriversSchema } from "../validation/nearby-drivers.schema.js";
+import { findNearbyDriverIds } from "../repositories/driver-location.repository.js";
+import { findAvailableDriversByIds } from "../repositories/driver.repository.js";
 
 const router = Router();
-
-router.get("/:id", async (req, res) => {
-  const validation = driverIdSchema.safeParse(req.params.id);
-
-  if (!validation.success) {
-    return res.status(400).json({
-      error: "Invalid driver ID",
-    });
-  }
-
-  const driver = await findDriverById(validation.data);
-
-  if (!driver) {
-    return res.status(404).json({
-      error: "Driver not found",
-    });
-  }
-
-  return res.status(200).json({
-    data: driver,
-  });
-});
 
 router.post("/", async (req, res) => {
   const validation = createDriverSchema.safeParse(req.body);
@@ -132,6 +113,61 @@ router.patch("/:id/location", async (req, res) => {
       latitude: locationValidation.data.latitude,
       longitude: locationValidation.data.longitude,
     },
+  });
+});
+
+router.get("/nearby", async (req, res) => {
+  const validation = nearbyDriversSchema.safeParse(req.query);
+
+  if (!validation.success) {
+    return res.status(400).json({
+      error: "Invalid nearby-driver search parameters",
+      details: validation.error.issues,
+    });
+  }
+
+  const { latitude, longitude, radius } = validation.data;
+
+  const nearbyDriverIds = await findNearbyDriverIds({
+    latitude,
+    longitude,
+    radius,
+  });
+
+  if (nearbyDriverIds.length === 0) {
+    return res.status(200).json({
+      data: [],
+      count: 0,
+    });
+  }
+
+  const availableDrivers = await findAvailableDriversByIds(nearbyDriverIds);
+
+  return res.status(200).json({
+    data: availableDrivers,
+    count: availableDrivers.length,
+  });
+});
+
+router.get("/:id", async (req, res) => {
+  const validation = driverIdSchema.safeParse(req.params.id);
+
+  if (!validation.success) {
+    return res.status(400).json({
+      error: "Invalid driver ID",
+    });
+  }
+
+  const driver = await findDriverById(validation.data);
+
+  if (!driver) {
+    return res.status(404).json({
+      error: "Driver not found",
+    });
+  }
+
+  return res.status(200).json({
+    data: driver,
   });
 });
 

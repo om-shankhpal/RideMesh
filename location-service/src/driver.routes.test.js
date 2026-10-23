@@ -258,6 +258,222 @@ describe("PATCH /drivers/:id/location", () => {
   });
 });
 
+describe("GET /drivers/nearby", () => {
+  it("returns nearby available drivers", async () => {
+    let driverId;
+
+    try {
+      // 1. Create a driver
+      const createResponse = await request(app).post("/drivers").send({
+        name: "Nearby Test Driver",
+        vehicleType: "BIKE",
+      });
+
+      expect(createResponse.status).toBe(201);
+
+      driverId = createResponse.body.data.id;
+
+      // 2. Make the driver available
+      const statusResponse = await request(app)
+        .patch(`/drivers/${driverId}/status`)
+        .send({
+          status: "AVAILABLE",
+        });
+
+      expect(statusResponse.status).toBe(200);
+
+      // 3. Save the driver's location
+      const locationResponse = await request(app)
+        .patch(`/drivers/${driverId}/location`)
+        .send({
+          latitude: 19.076,
+          longitude: 72.8777,
+        });
+
+      expect(locationResponse.status).toBe(200);
+
+      // 4. Search for nearby drivers
+      const nearbyResponse = await request(app).get("/drivers/nearby").query({
+        latitude: 19.076,
+        longitude: 72.8777,
+        radius: 3000,
+      });
+
+      expect(nearbyResponse.status).toBe(200);
+      expect(nearbyResponse.body.count).toBeGreaterThan(0);
+
+      // Our driver must appear in the results
+      const returnedIds = nearbyResponse.body.data.map((driver) => driver.id);
+
+      expect(returnedIds).toContain(driverId);
+    } finally {
+      // Remove test data from Redis and PostgreSQL
+      if (driverId) {
+        await redisClient.zRem("drivers:geo", driverId);
+
+        await pool.query("DELETE FROM drivers WHERE id = $1", [driverId]);
+      }
+    }
+  });
+  it("excludes OFFLINE drivers from nearby results", async () => {
+    let driverId;
+
+    try {
+      const createResponse = await request(app).post("/drivers").send({
+        name: "Offline Test Driver",
+        vehicleType: "BIKE",
+      });
+
+      expect(createResponse.status).toBe(201);
+      driverId = createResponse.body.data.id;
+
+      // Save a location while the driver is OFFLINE.
+      const locationResponse = await request(app)
+        .patch(`/drivers/${driverId}/location`)
+        .send({
+          latitude: 19.076,
+          longitude: 72.8777,
+        });
+
+      expect(locationResponse.status).toBe(200);
+
+      const nearbyResponse = await request(app).get("/drivers/nearby").query({
+        latitude: 19.076,
+        longitude: 72.8777,
+        radius: 3000,
+      });
+
+      expect(nearbyResponse.status).toBe(200);
+
+      const returnedIds = nearbyResponse.body.data.map((driver) => driver.id);
+
+      expect(returnedIds).not.toContain(driverId);
+    } finally {
+      if (driverId) {
+        await redisClient.zRem("drivers:geo", driverId);
+        await pool.query("DELETE FROM drivers WHERE id = $1", [driverId]);
+      }
+    }
+  });
+
+  it("excludes ON_TRIP drivers from nearby results", async () => {
+    let driverId;
+
+    try {
+      const createResponse = await request(app).post("/drivers").send({
+        name: "On Trip Test Driver",
+        vehicleType: "CAR",
+      });
+
+      expect(createResponse.status).toBe(201);
+      driverId = createResponse.body.data.id;
+
+      // OFFLINE -> AVAILABLE
+      const availableResponse = await request(app)
+        .patch(`/drivers/${driverId}/status`)
+        .send({ status: "AVAILABLE" });
+
+      expect(availableResponse.status).toBe(200);
+
+      // AVAILABLE -> ON_TRIP
+      const onTripResponse = await request(app)
+        .patch(`/drivers/${driverId}/status`)
+        .send({ status: "ON_TRIP" });
+
+      expect(onTripResponse.status).toBe(200);
+
+      const locationResponse = await request(app)
+        .patch(`/drivers/${driverId}/location`)
+        .send({
+          latitude: 19.076,
+          longitude: 72.8777,
+        });
+
+      expect(locationResponse.status).toBe(200);
+
+      const nearbyResponse = await request(app).get("/drivers/nearby").query({
+        latitude: 19.076,
+        longitude: 72.8777,
+        radius: 3000,
+      });
+
+      expect(nearbyResponse.status).toBe(200);
+
+      const returnedIds = nearbyResponse.body.data.map((driver) => driver.id);
+
+      expect(returnedIds).not.toContain(driverId);
+    } finally {
+      if (driverId) {
+        await redisClient.zRem("drivers:geo", driverId);
+        await pool.query("DELETE FROM drivers WHERE id = $1", [driverId]);
+      }
+    }
+  });
+  it("rejects latitude outside the valid range", async () => {
+    const response = await request(app).get("/drivers/nearby").query({
+      latitude: 95,
+      longitude: 72.8777,
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects longitude outside the valid range", async () => {
+    const response = await request(app).get("/drivers/nearby").query({
+      latitude: 19.076,
+      longitude: 200,
+    });
+
+    expect(response.status).toBe(400);
+  });
+  it("uses the default radius when radius is omitted", async () => {
+    let driverId;
+
+    try {
+      const createResponse = await request(app).post("/drivers").send({
+        name: "Default Radius Test Driver",
+        vehicleType: "BIKE",
+      });
+
+      expect(createResponse.status).toBe(201);
+      driverId = createResponse.body.data.id;
+
+      const statusResponse = await request(app)
+        .patch(`/drivers/${driverId}/status`)
+        .send({ status: "AVAILABLE" });
+
+      expect(statusResponse.status).toBe(200);
+
+      const locationResponse = await request(app)
+        .patch(`/drivers/${driverId}/location`)
+        .send({
+          latitude: 19.076,
+          longitude: 72.8777,
+        });
+
+      expect(locationResponse.status).toBe(200);
+
+      // Notice: radius is intentionally omitted.
+      const nearbyResponse = await request(app).get("/drivers/nearby").query({
+        latitude: 19.076,
+        longitude: 72.8777,
+      });
+
+      expect(nearbyResponse.status).toBe(200);
+
+      const returnedIds = nearbyResponse.body.data.map((driver) => driver.id);
+
+      expect(returnedIds).toContain(driverId);
+    } finally {
+      if (driverId) {
+        await redisClient.zRem("drivers:geo", driverId);
+
+        await pool.query("DELETE FROM drivers WHERE id = $1", [driverId]);
+      }
+    }
+  });
+});
+
 beforeAll(async () => {
   await connectRedis();
 });

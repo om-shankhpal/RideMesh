@@ -77,3 +77,30 @@ export async function updateDriverStatus(driverId, status) {
 
     return { type: "invalid_transition", currentStatus: existingDriver.status };
 }
+
+export async function findAvailableDriversByIds(driverIds) {
+    if (driverIds.length === 0) {
+        return [];
+    }
+
+    const query = `
+        SELECT
+            id,
+            name,
+            vehicle_type,
+            status
+        FROM drivers
+        WHERE id = ANY($1::uuid[])
+          AND status = 'AVAILABLE'
+    `;
+
+    const result = await pool.query(query, [driverIds]);
+
+    const driversById = new Map(
+        result.rows.map((driver) => [driver.id, driver]),
+    );
+
+    return driverIds
+        .map((driverId) => driversById.get(driverId))
+        .filter(Boolean);
+}

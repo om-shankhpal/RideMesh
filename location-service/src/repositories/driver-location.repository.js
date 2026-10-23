@@ -12,3 +12,27 @@ export async function saveDriverLocation(
         member: driverId,
     });
 }
+
+export async function findNearbyDriverIds({
+    latitude,
+    longitude,
+    radius,
+}) {
+    const driverIds = await redisClient.geoSearch(
+        DRIVER_GEO_KEY,
+        {
+            longitude,
+            latitude,
+        },
+        {
+            radius,
+            unit: "m",
+        },
+        {
+            SORT: "ASC",
+        },
+    );
+
+    return driverIds;
+}
+
