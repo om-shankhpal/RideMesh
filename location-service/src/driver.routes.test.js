@@ -1,8 +1,10 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
 import request from "supertest";
 
 import app from "./server.js";
 import { pool } from "./config/database.js";
+import { connectRedis, redisClient } from "./config/redis.js";
 
 describe("POST /drivers", () => {
   it("creates a driver with valid input", async () => {
@@ -176,6 +178,94 @@ describe("PATCH /drivers/:id/status", () => {
   });
 });
 
+describe("PATCH /drivers/:id/location", () => {
+  it("updates a driver's location", async () => {
+    const createResponse = await request(app).post("/drivers").send({
+      name: "Location Test Driver",
+      vehicleType: "BIKE",
+    });
+
+    const driverId = createResponse.body.data.id;
+
+    try {
+      const response = await request(app)
+        .patch(`/drivers/${driverId}/location`)
+        .send({
+          latitude: 19.076,
+          longitude: 72.8777,
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.driverId).toBe(driverId);
+      expect(response.body.data.latitude).toBe(19.076);
+      expect(response.body.data.longitude).toBe(72.8777);
+
+      const coordinates = await redisClient.geoPos("drivers:geo", driverId);
+
+      expect(coordinates).not.toBeNull();
+    } finally {
+      await redisClient.zRem("drivers:geo", driverId);
+      await pool.query("DELETE FROM drivers WHERE id = $1", [driverId]);
+    }
+  });
+
+  it("rejects an invalid driver ID", async () => {
+    const response = await request(app)
+      .patch("/drivers/not-a-uuid/location")
+      .send({
+        latitude: 19.076,
+        longitude: 72.8777,
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("Invalid driver ID");
+  });
+
+  it("rejects an out-of-range latitude", async () => {
+    const response = await request(app)
+      .patch("/drivers/00000000-0000-0000-0000-000000000000/location")
+      .send({
+        latitude: 95,
+        longitude: 72.8777,
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("Invalid location coordinates");
+  });
+
+  it("rejects an out-of-range longitude", async () => {
+    const response = await request(app)
+      .patch("/drivers/00000000-0000-0000-0000-000000000000/location")
+      .send({
+        latitude: 19.076,
+        longitude: 200,
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("Invalid location coordinates");
+  });
+
+  it("returns 404 when the driver does not exist", async () => {
+    const response = await request(app)
+      .patch("/drivers/00000000-0000-0000-0000-000000000000/location")
+      .send({
+        latitude: 19.076,
+        longitude: 72.8777,
+      });
+
+    expect(response.status).toBe(404);
+    expect(response.body.error).toBe("Driver not found");
+  });
+});
+
+beforeAll(async () => {
+  await connectRedis();
+});
+
 afterAll(async () => {
+  if (redisClient.isOpen) {
+    await redisClient.quit();
+  }
+
   await pool.end();
 });

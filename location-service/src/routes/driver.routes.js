@@ -7,6 +7,8 @@ import {
 import { createDriverSchema } from "../validation/driver.schema.js";
 import { driverIdSchema } from "../validation/driver-id.schema.js";
 import { driverStatusSchema } from "../validation/driver-status.schema.js";
+import { driverLocationSchema } from "../validation/driver-location.schema.js";
+import { saveDriverLocation } from "../repositories/driver-location.repository.js";
 
 const router = Router();
 
@@ -92,6 +94,44 @@ router.patch("/:id/status", async (req, res) => {
 
   return res.status(200).json({
     data: result.driver,
+  });
+});
+
+router.patch("/:id/location", async (req, res) => {
+  const idValidation = driverIdSchema.safeParse(req.params.id);
+
+  if (!idValidation.success) {
+    return res.status(400).json({
+      error: "Invalid driver ID",
+    });
+  }
+
+  const locationValidation = driverLocationSchema.safeParse(req.body);
+
+  if (!locationValidation.success) {
+    return res.status(400).json({
+      error: "Invalid location coordinates",
+      details: locationValidation.error.issues,
+    });
+  }
+
+  const driver = await findDriverById(idValidation.data);
+
+  if (!driver) {
+    return res.status(404).json({
+      error: "Driver not found",
+    });
+  }
+
+  await saveDriverLocation(driver.id, locationValidation.data);
+
+  return res.status(200).json({
+    message: "Driver location updated successfully",
+    data: {
+      driverId: driver.id,
+      latitude: locationValidation.data.latitude,
+      longitude: locationValidation.data.longitude,
+    },
   });
 });
 
