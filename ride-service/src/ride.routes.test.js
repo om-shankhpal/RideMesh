@@ -6,6 +6,7 @@ import { pool } from "./config/database.js";
 import {
   createRide,
   updateRideStatus,
+  assignDriverToRide,
 } from "./repositories/ride.repository.js";
 
 describe("POST /rides", () => {
@@ -176,6 +177,119 @@ describe("PATCH /rides/:id/status", () => {
       .send({ status: "MATCHED" });
 
     expect(response.status).toBe(404);
+  });
+});
+
+describe("assignDriverToRide", () => {
+  const rideDetails = {
+    riderId: "11111111-1111-4111-8111-111111111111",
+    pickupLatitude: 19.076,
+    pickupLongitude: 72.8777,
+    dropoffLatitude: 19.1,
+    dropoffLongitude: 72.9,
+  };
+
+  it("assigns a driver and changes the ride to MATCHED", async () => {
+    let ride;
+
+    try {
+      ride = await createRide(rideDetails);
+
+      const driverId = "33333333-3333-4333-8333-333333333333";
+
+      const assignedRide = await assignDriverToRide(ride.id, driverId);
+
+      expect(assignedRide).not.toBeNull();
+      expect(assignedRide.driver_id).toBe(driverId);
+      expect(assignedRide.status).toBe("MATCHED");
+    } finally {
+      if (ride) {
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
+
+  it("does not assign a driver to a ride that is already matched", async () => {
+    let ride;
+
+    try {
+      ride = await createRide(rideDetails);
+
+      const firstDriverId = "33333333-3333-4333-8333-333333333333";
+      const secondDriverId = "44444444-4444-4444-8444-444444444444";
+
+      const firstAssignment = await assignDriverToRide(ride.id, firstDriverId);
+
+      const secondAssignment = await assignDriverToRide(
+        ride.id,
+        secondDriverId,
+      );
+
+      expect(firstAssignment.driver_id).toBe(firstDriverId);
+      expect(secondAssignment).toBeNull();
+    } finally {
+      if (ride) {
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
+
+  it("returns null when the ride does not exist", async () => {
+    const result = await assignDriverToRide(
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+    );
+
+    expect(result).toBeNull();
+  });
+
+  it("prevents two rides from claiming the same driver concurrently", async () => {
+    let ride1;
+    let ride2;
+
+    const driverId = "33333333-3333-4333-8333-333333333333";
+
+    const rideDetails = {
+      riderId: "11111111-1111-4111-8111-111111111111",
+      pickupLatitude: 19.076,
+      pickupLongitude: 72.8777,
+      dropoffLatitude: 19.1,
+      dropoffLongitude: 72.9,
+    };
+
+    try {
+      ride1 = await createRide(rideDetails);
+      ride2 = await createRide(rideDetails);
+
+      const results = await Promise.all([
+        assignDriverToRide(ride1.id, driverId),
+        assignDriverToRide(ride2.id, driverId),
+      ]);
+
+      const successfulAssignments = results.filter((result) => result !== null);
+
+      expect(successfulAssignments).toHaveLength(1);
+
+      const databaseResult = await pool.query(
+        `
+                SELECT COUNT(*)::int AS count
+                FROM rides
+                WHERE driver_id = $1
+                  AND status IN ('MATCHED', 'IN_PROGRESS')
+            `,
+        [driverId],
+      );
+
+      expect(databaseResult.rows[0].count).toBe(1);
+    } finally {
+      const rideIds = [ride1?.id, ride2?.id].filter(Boolean);
+
+      if (rideIds.length > 0) {
+        await pool.query("DELETE FROM rides WHERE id = ANY($1::uuid[])", [
+          rideIds,
+        ]);
+      }
+    }
   });
 });
 
