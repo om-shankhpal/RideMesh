@@ -9,3 +9,12 @@ export const createRideSchema = z.object({
     dropoffLatitude: z.number().min(-90).max(90),
     dropoffLongitude: z.number().min(-180).max(180),
 });
+
+export const updateRideStatusSchema = z.object({
+    status: z.enum([
+        "MATCHED",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "CANCELLED",
+    ]),
+});

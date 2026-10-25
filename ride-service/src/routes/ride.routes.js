@@ -1,55 +1,107 @@
 import { Router } from "express";
 
 import {
-    createRide,
-    findRideById,
+  createRide,
+  findRideById,
+  updateRideStatus,
 } from "../repositories/ride.repository.js";
 
-import { createRideSchema } from "../validation/ride.schema.js";
+import {
+  createRideSchema,
+  updateRideStatusSchema,
+} from "../validation/ride.schema.js";
 import { rideIdSchema } from "../validation/ride-id.schema.js";
 
 const router = Router();
 
 router.get("/:id", async (req, res, next) => {
-    const validation = rideIdSchema.safeParse(req.params.id);
+  const validation = rideIdSchema.safeParse(req.params.id);
 
-    if (!validation.success) {
+  if (!validation.success) {
+    return res.status(400).json({
+      error: "Invalid ride ID",
+    });
+  }
+
+  try {
+    const ride = await findRideById(validation.data);
+
+    if (!ride) {
+      return res.status(404).json({
+        error: "Ride not found",
+      });
+    }
+
+    return res.status(200).json({
+      data: ride,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/", async (req, res, next) => {
+  const validation = createRideSchema.safeParse(req.body);
+
+  if (!validation.success) {
+    return res.status(400).json({
+      error: "Invalid ride details",
+      details: validation.error.issues,
+    });
+  }
+
+  try {
+    const ride = await createRide(validation.data);
+
+    return res.status(201).json({
+      data: ride,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.patch("/:id/status", async (req, res, next) => {
+    const idValidation = rideIdSchema.safeParse(req.params.id);
+
+    if (!idValidation.success) {
         return res.status(400).json({
             error: "Invalid ride ID",
         });
     }
 
+    const bodyValidation = updateRideStatusSchema.safeParse(req.body);
+
+    if (!bodyValidation.success) {
+        return res.status(400).json({
+            error: "Invalid ride status",
+            details: bodyValidation.error.issues,
+        });
+    }
+
     try {
-        const ride = await findRideById(validation.data);
+        const ride = await updateRideStatus(
+            idValidation.data,
+            bodyValidation.data.status,
+        );
 
         if (!ride) {
-            return res.status(404).json({
-                error: "Ride not found",
+            const existingRide = await findRideById(idValidation.data);
+
+            if (!existingRide) {
+                return res.status(404).json({
+                    error: "Ride not found",
+                });
+            }
+
+            return res.status(409).json({
+                error: "Invalid ride status transition",
+                currentStatus: existingRide.status,
+                requestedStatus: bodyValidation.data.status,
             });
         }
 
         return res.status(200).json({
-            data: ride,
-        });
-    } catch (error) {
-        return next(error);
-    }
-});
-
-router.post("/", async (req, res, next) => {
-    const validation = createRideSchema.safeParse(req.body);
-
-    if (!validation.success) {
-        return res.status(400).json({
-            error: "Invalid ride details",
-            details: validation.error.issues,
-        });
-    }
-
-    try {
-        const ride = await createRide(validation.data);
-
-        return res.status(201).json({
             data: ride,
         });
     } catch (error) {
