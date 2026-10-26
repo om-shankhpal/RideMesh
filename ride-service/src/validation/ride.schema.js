@@ -18,3 +18,7 @@ export const updateRideStatusSchema = z.object({
         "CANCELLED",
     ]),
 });
+
+export const assignDriverSchema = z.object({
+    driverId: z.string().uuid(),
+});

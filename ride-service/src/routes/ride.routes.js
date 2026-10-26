@@ -4,11 +4,13 @@ import {
   createRide,
   findRideById,
   updateRideStatus,
+  assignDriverToRide,
 } from "../repositories/ride.repository.js";
 
 import {
   createRideSchema,
   updateRideStatusSchema,
+  assignDriverSchema,
 } from "../validation/ride.schema.js";
 import { rideIdSchema } from "../validation/ride-id.schema.js";
 
@@ -62,51 +64,97 @@ router.post("/", async (req, res, next) => {
 });
 
 router.patch("/:id/status", async (req, res, next) => {
-    const idValidation = rideIdSchema.safeParse(req.params.id);
+  const idValidation = rideIdSchema.safeParse(req.params.id);
 
-    if (!idValidation.success) {
-        return res.status(400).json({
-            error: "Invalid ride ID",
+  if (!idValidation.success) {
+    return res.status(400).json({
+      error: "Invalid ride ID",
+    });
+  }
+
+  const bodyValidation = updateRideStatusSchema.safeParse(req.body);
+
+  if (!bodyValidation.success) {
+    return res.status(400).json({
+      error: "Invalid ride status",
+      details: bodyValidation.error.issues,
+    });
+  }
+
+  try {
+    const ride = await updateRideStatus(
+      idValidation.data,
+      bodyValidation.data.status,
+    );
+
+    if (!ride) {
+      const existingRide = await findRideById(idValidation.data);
+
+      if (!existingRide) {
+        return res.status(404).json({
+          error: "Ride not found",
         });
+      }
+
+      return res.status(409).json({
+        error: "Invalid ride status transition",
+        currentStatus: existingRide.status,
+        requestedStatus: bodyValidation.data.status,
+      });
     }
 
-    const bodyValidation = updateRideStatusSchema.safeParse(req.body);
+    return res.status(200).json({
+      data: ride,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
 
-    if (!bodyValidation.success) {
-        return res.status(400).json({
-            error: "Invalid ride status",
-            details: bodyValidation.error.issues,
+router.patch("/:id/assign", async (req, res, next) => {
+  const idValidation = rideIdSchema.safeParse(req.params.id);
+
+  if (!idValidation.success) {
+    return res.status(400).json({
+      error: "Invalid ride ID",
+    });
+  }
+
+  const bodyValidation = assignDriverSchema.safeParse(req.body);
+
+  if (!bodyValidation.success) {
+    return res.status(400).json({
+      error: "Invalid driver details",
+      details: bodyValidation.error.issues,
+    });
+  }
+
+  try {
+    const ride = await assignDriverToRide(
+      idValidation.data,
+      bodyValidation.data.driverId,
+    );
+
+    if (!ride) {
+      const existingRide = await findRideById(idValidation.data);
+
+      if (!existingRide) {
+        return res.status(404).json({
+          error: "Ride not found",
         });
+      }
+
+      return res.status(409).json({
+        error: "Ride cannot be assigned to this driver",
+      });
     }
 
-    try {
-        const ride = await updateRideStatus(
-            idValidation.data,
-            bodyValidation.data.status,
-        );
-
-        if (!ride) {
-            const existingRide = await findRideById(idValidation.data);
-
-            if (!existingRide) {
-                return res.status(404).json({
-                    error: "Ride not found",
-                });
-            }
-
-            return res.status(409).json({
-                error: "Invalid ride status transition",
-                currentStatus: existingRide.status,
-                requestedStatus: bodyValidation.data.status,
-            });
-        }
-
-        return res.status(200).json({
-            data: ride,
-        });
-    } catch (error) {
-        return next(error);
-    }
+    return res.status(200).json({
+      data: ride,
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 export default router;

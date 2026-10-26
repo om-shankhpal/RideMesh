@@ -293,6 +293,83 @@ describe("assignDriverToRide", () => {
   });
 });
 
+describe("PATCH /rides/:id/assign", () => {
+  const rideDetails = {
+    riderId: "11111111-1111-4111-8111-111111111111",
+    pickupLatitude: 19.076,
+    pickupLongitude: 72.8777,
+    dropoffLatitude: 19.1,
+    dropoffLongitude: 72.9,
+  };
+
+  it("assigns a driver successfully", async () => {
+    let ride;
+
+    try {
+      ride = await createRide(rideDetails);
+
+      const driverId = "33333333-3333-4333-8333-333333333333";
+
+      const response = await request(app)
+        .patch(`/rides/${ride.id}/assign`)
+        .send({ driverId });
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.driver_id).toBe(driverId);
+      expect(response.body.data.status).toBe("MATCHED");
+    } finally {
+      if (ride) {
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
+
+  it("rejects an invalid driver ID", async () => {
+    let ride;
+
+    try {
+      ride = await createRide(rideDetails);
+
+      const response = await request(app)
+        .patch(`/rides/${ride.id}/assign`)
+        .send({ driverId: "not-a-uuid" });
+
+      expect(response.status).toBe(400);
+    } finally {
+      if (ride) {
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
+
+  it("returns 409 when the ride is already matched", async () => {
+    let ride;
+
+    try {
+      ride = await createRide(rideDetails);
+
+      const firstDriverId = "33333333-3333-4333-8333-333333333333";
+      const secondDriverId = "44444444-4444-4444-8444-444444444444";
+
+      const firstResponse = await request(app)
+        .patch(`/rides/${ride.id}/assign`)
+        .send({ driverId: firstDriverId });
+
+      expect(firstResponse.status).toBe(200);
+
+      const secondResponse = await request(app)
+        .patch(`/rides/${ride.id}/assign`)
+        .send({ driverId: secondDriverId });
+
+      expect(secondResponse.status).toBe(409);
+    } finally {
+      if (ride) {
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
+});
+
 afterAll(async () => {
   await pool.end();
 });
