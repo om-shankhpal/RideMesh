@@ -291,6 +291,100 @@ describe("assignDriverToRide", () => {
       }
     }
   });
+  it("creates a pending outbox event when a driver is assigned", async () => {
+    let ride;
+
+    const driverId = "33333333-3333-4333-8333-333333333333";
+
+    try {
+      ride = await createRide(rideDetails);
+
+      const assignedRide = await assignDriverToRide(ride.id, driverId);
+
+      expect(assignedRide).not.toBeNull();
+
+      const eventResult = await pool.query(
+        `
+          SELECT event_type, aggregate_id, payload, status
+          FROM outbox_events
+          WHERE aggregate_id = $1
+        `,
+        [ride.id],
+      );
+
+      expect(eventResult.rows).toHaveLength(1);
+      expect(eventResult.rows[0].event_type).toBe("DRIVER_STATUS_UPDATE");
+      expect(eventResult.rows[0].aggregate_id).toBe(ride.id);
+      expect(eventResult.rows[0].payload).toEqual({
+        driverId,
+        status: "ON_TRIP",
+      });
+      expect(eventResult.rows[0].status).toBe("PENDING");
+    } finally {
+      if (ride) {
+        await pool.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
+          ride.id,
+        ]);
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
+
+  it("rolls back the ride assignment if creating the outbox event fails", async () => {
+    let ride;
+
+    const driverId = "33333333-3333-4333-8333-333333333333";
+
+    try {
+      ride = await createRide(rideDetails);
+
+      // Temporarily install a database trigger that rejects outbox inserts.
+      await pool.query(`
+        CREATE OR REPLACE FUNCTION reject_test_outbox_insert()
+        RETURNS TRIGGER AS $$
+        BEGIN
+          RAISE EXCEPTION 'Simulated outbox insert failure';
+        END;
+        $$ LANGUAGE plpgsql
+      `);
+
+      await pool.query(`
+        CREATE TRIGGER reject_test_outbox_insert_trigger
+        BEFORE INSERT ON outbox_events
+        FOR EACH ROW
+        EXECUTE FUNCTION reject_test_outbox_insert()
+      `);
+
+      await expect(assignDriverToRide(ride.id, driverId)).rejects.toThrow(
+        "Simulated outbox insert failure",
+      );
+
+      const rideResult = await pool.query(
+        "SELECT driver_id, status FROM rides WHERE id = $1",
+        [ride.id],
+      );
+
+      expect(rideResult.rows[0].driver_id).toBeNull();
+      expect(rideResult.rows[0].status).toBe("REQUESTED");
+    } finally {
+      // Remove the test trigger even if an assertion fails.
+      await pool.query(`
+        DROP TRIGGER IF EXISTS reject_test_outbox_insert_trigger
+        ON outbox_events
+      `);
+
+      await pool.query(`
+        DROP FUNCTION IF EXISTS reject_test_outbox_insert()
+      `);
+
+      if (ride) {
+        await pool.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
+          ride.id,
+        ]);
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
 });
 
 describe("PATCH /rides/:id/assign", () => {

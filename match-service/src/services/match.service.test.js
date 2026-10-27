@@ -1,16 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getNearbyDrivers } from "../clients/location.client.js";
-import { updateDriverStatus } from "../clients/driver.client.js";
 import { assignDriverToRide, getRideById } from "../clients/ride.client.js";
 import { matchRide } from "./match.service.js";
 
 vi.mock("../clients/location.client.js", () => ({
   getNearbyDrivers: vi.fn(),
-}));
-
-vi.mock("../clients/driver.client.js", () => ({
-  updateDriverStatus: vi.fn(),
 }));
 
 vi.mock("../clients/ride.client.js", () => ({
@@ -24,7 +19,7 @@ describe("matchRide", () => {
     vi.restoreAllMocks();
   });
 
-  it("assigns the first available candidate and updates driver status", async () => {
+  it("assigns the first available candidate", async () => {
     const rideId = "70bfa0a9-6604-4c82-b32f-5cba135d77cf";
     const driverId = "2cbf952d-0851-4367-abd6-e088cd9f398f";
 
@@ -44,10 +39,6 @@ describe("matchRide", () => {
     getRideById.mockResolvedValue(mockRide);
     getNearbyDrivers.mockResolvedValue([{ id: driverId, status: "AVAILABLE" }]);
     assignDriverToRide.mockResolvedValue(mockMatchedRide);
-    updateDriverStatus.mockResolvedValue({
-      id: driverId,
-      status: "ON_TRIP",
-    });
 
     const result = await matchRide(rideId);
 
@@ -61,43 +52,6 @@ describe("matchRide", () => {
     });
 
     expect(assignDriverToRide).toHaveBeenCalledWith(rideId, driverId);
-
-    expect(updateDriverStatus).toHaveBeenCalledWith(driverId, "ON_TRIP");
-  });
-
-  it("does not undo a successful assignment when driver status synchronization fails", async () => {
-    const rideId = "70bfa0a9-6604-4c82-b32f-5cba135d77cf";
-    const driverId = "2cbf952d-0851-4367-abd6-e088cd9f398f";
-
-    const mockMatchedRide = {
-      id: rideId,
-      driver_id: driverId,
-      status: "MATCHED",
-    };
-
-    getRideById.mockResolvedValue({
-      id: rideId,
-      pickup_latitude: 19.076,
-      pickup_longitude: 72.8777,
-      status: "REQUESTED",
-    });
-
-    getNearbyDrivers.mockResolvedValue([{ id: driverId }]);
-    assignDriverToRide.mockResolvedValue(mockMatchedRide);
-
-    updateDriverStatus.mockRejectedValue(
-      new Error("Location Service unavailable"),
-    );
-
-    const consoleErrorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
-
-    const result = await matchRide(rideId);
-
-    expect(result).toEqual(mockMatchedRide);
-    expect(updateDriverStatus).toHaveBeenCalledWith(driverId, "ON_TRIP");
-    expect(consoleErrorSpy).toHaveBeenCalled();
     expect(assignDriverToRide).toHaveBeenCalledTimes(1);
   });
 
@@ -116,7 +70,6 @@ describe("matchRide", () => {
 
     expect(getNearbyDrivers).not.toHaveBeenCalled();
     expect(assignDriverToRide).not.toHaveBeenCalled();
-    expect(updateDriverStatus).not.toHaveBeenCalled();
   });
 
   it("tries the next driver when an assignment conflicts", async () => {
@@ -148,11 +101,6 @@ describe("matchRide", () => {
         status: "MATCHED",
       });
 
-    updateDriverStatus.mockResolvedValue({
-      id: secondDriverId,
-      status: "ON_TRIP",
-    });
-
     const result = await matchRide(rideId);
 
     expect(result.driver_id).toBe(secondDriverId);
@@ -169,8 +117,6 @@ describe("matchRide", () => {
       rideId,
       secondDriverId,
     );
-
-    expect(updateDriverStatus).toHaveBeenCalledWith(secondDriverId, "ON_TRIP");
   });
 
   it("fails when no nearby drivers are available", async () => {
@@ -191,7 +137,6 @@ describe("matchRide", () => {
     });
 
     expect(assignDriverToRide).not.toHaveBeenCalled();
-    expect(updateDriverStatus).not.toHaveBeenCalled();
   });
 
   it("propagates unexpected assignment errors", async () => {
@@ -217,7 +162,5 @@ describe("matchRide", () => {
       message: "Ride Service unavailable",
       status: 503,
     });
-
-    expect(updateDriverStatus).not.toHaveBeenCalled();
   });
 });

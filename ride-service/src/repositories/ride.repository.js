@@ -116,11 +116,11 @@ export async function assignDriverToRide(rideId, driverId) {
     // this ride simultaneously.
     const rideResult = await client.query(
       `
-                SELECT id, driver_id, status
-                FROM rides
-                WHERE id = $1
-                FOR UPDATE
-            `,
+        SELECT id, driver_id, status
+        FROM rides
+        WHERE id = $1
+        FOR UPDATE
+      `,
       [rideId],
     );
 
@@ -138,26 +138,26 @@ export async function assignDriverToRide(rideId, driverId) {
     }
 
     const updateQuery = `
-            UPDATE rides
-            SET
-                driver_id = $2,
-                status = 'MATCHED',
-                updated_at = NOW()
-            WHERE id = $1
-              AND status = 'REQUESTED'
-              AND driver_id IS NULL
-            RETURNING
-                id,
-                rider_id,
-                driver_id,
-                pickup_latitude,
-                pickup_longitude,
-                dropoff_latitude,
-                dropoff_longitude,
-                status,
-                created_at,
-                updated_at
-        `;
+      UPDATE rides
+      SET
+        driver_id = $2,
+        status = 'MATCHED',
+        updated_at = NOW()
+      WHERE id = $1
+        AND status = 'REQUESTED'
+        AND driver_id IS NULL
+      RETURNING
+        id,
+        rider_id,
+        driver_id,
+        pickup_latitude,
+        pickup_longitude,
+        dropoff_latitude,
+        dropoff_longitude,
+        status,
+        created_at,
+        updated_at
+    `;
 
     const result = await client.query(updateQuery, [rideId, driverId]);
 
@@ -166,9 +166,32 @@ export async function assignDriverToRide(rideId, driverId) {
       return null;
     }
 
+    const assignedRide = result.rows[0];
+
+    // Record the required driver-status update in the same transaction.
+    const outboxQuery = `
+      INSERT INTO outbox_events (
+        event_type,
+        aggregate_id,
+        payload
+      )
+      VALUES ($1, $2, $3::jsonb)
+    `;
+
+    const eventPayload = {
+      driverId: assignedRide.driver_id,
+      status: "ON_TRIP",
+    };
+
+    await client.query(outboxQuery, [
+      "DRIVER_STATUS_UPDATE",
+      assignedRide.id,
+      JSON.stringify(eventPayload),
+    ]);
+
     await client.query("COMMIT");
 
-    return result.rows[0];
+    return assignedRide;
   } catch (error) {
     await client.query("ROLLBACK");
 
