@@ -1,5 +1,6 @@
 import { getNearbyDrivers } from "../clients/location.client.js";
 import { assignDriverToRide, getRideById } from "../clients/ride.client.js";
+import { updateDriverStatus } from "../clients/driver.client.js";
 
 export async function matchRide(rideId) {
   const ride = await getRideById(rideId);
@@ -17,7 +18,18 @@ export async function matchRide(rideId) {
 
   for (const driver of drivers) {
     try {
-      return await assignDriverToRide(rideId, driver.id);
+      const matchedRide = await assignDriverToRide(rideId, driver.id);
+
+      try {
+        await updateDriverStatus(driver.id, "ON_TRIP");
+      } catch (error) {
+        console.error(
+          `Ride ${rideId} was matched, but driver ${driver.id} status synchronization failed:`,
+          error.message,
+        );
+      }
+
+      return matchedRide;
     } catch (error) {
       if (error.status === 409) {
         continue;
