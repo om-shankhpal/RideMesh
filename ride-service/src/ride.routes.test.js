@@ -5,6 +5,7 @@ import app from "./server.js";
 import { pool } from "./config/database.js";
 import {
   createRide,
+  findRideById,
   updateRideStatus,
   assignDriverToRide,
 } from "./repositories/ride.repository.js";
@@ -114,22 +115,24 @@ describe("PATCH /rides/:id/status", () => {
     return createRide(rideDetails);
   }
 
-  it("transitions a ride from REQUESTED to MATCHED", async () => {
-    let ride;
+  it("rejects transitioning directly from REQUESTED to MATCHED", async () => {
+    const ride = await createTestRide();
 
     try {
-      ride = await createTestRide();
-
       const response = await request(app)
         .patch(`/rides/${ride.id}/status`)
         .send({ status: "MATCHED" });
 
-      expect(response.status).toBe(200);
-      expect(response.body.data.status).toBe("MATCHED");
+      expect(response.status).toBe(409);
+
+      const updatedRide = await findRideById(ride.id);
+      expect(updatedRide.status).toBe("REQUESTED");
+      expect(updatedRide.driver_id).toBeNull();
     } finally {
-      if (ride) {
-        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
-      }
+      await pool.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
+        ride.id,
+      ]);
+      await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
     }
   });
 

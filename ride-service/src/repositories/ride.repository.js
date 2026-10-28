@@ -1,4 +1,32 @@
+
 import { pool } from "../config/database.js";
+
+const RIDE_FIELDS = `
+  id,
+  rider_id,
+  driver_id,
+  pickup_latitude,
+  pickup_longitude,
+  dropoff_latitude,
+  dropoff_longitude,
+  status,
+  created_at,
+  updated_at
+`;
+
+const allowedPreviousStatuses = {
+  IN_PROGRESS: ["MATCHED"],
+  COMPLETED: ["IN_PROGRESS"],
+  CANCELLED: ["REQUESTED", "MATCHED"],
+};
+
+async function rollbackQuietly(client) {
+  try {
+    await client.query("ROLLBACK");
+  } catch (rollbackError) {
+    console.error("Transaction rollback failed:", rollbackError.message);
+  }
+}
 
 export async function createRide({
   riderId,
@@ -8,26 +36,16 @@ export async function createRide({
   dropoffLongitude,
 }) {
   const query = `
-        INSERT INTO rides (
-            rider_id,
-            pickup_latitude,
-            pickup_longitude,
-            dropoff_latitude,
-            dropoff_longitude
-        )
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING
-            id,
-            rider_id,
-            driver_id,
-            pickup_latitude,
-            pickup_longitude,
-            dropoff_latitude,
-            dropoff_longitude,
-            status,
-            created_at,
-            updated_at
-    `;
+    INSERT INTO rides (
+      rider_id,
+      pickup_latitude,
+      pickup_longitude,
+      dropoff_latitude,
+      dropoff_longitude
+    )
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING ${RIDE_FIELDS}
+  `;
 
   const values = [
     riderId,
@@ -38,72 +56,102 @@ export async function createRide({
   ];
 
   const result = await pool.query(query, values);
-
   return result.rows[0];
 }
 
 export async function findRideById(rideId) {
   const query = `
-        SELECT
-            id,
-            rider_id,
-            driver_id,
-            pickup_latitude,
-            pickup_longitude,
-            dropoff_latitude,
-            dropoff_longitude,
-            status,
-            created_at,
-            updated_at
-        FROM rides
-        WHERE id = $1
-    `;
+    SELECT ${RIDE_FIELDS}
+    FROM rides
+    WHERE id = $1
+  `;
 
   const result = await pool.query(query, [rideId]);
-
   return result.rows[0] ?? null;
 }
-
-const allowedPreviousStatuses = {
-  MATCHED: ["REQUESTED"],
-  IN_PROGRESS: ["MATCHED"],
-  COMPLETED: ["IN_PROGRESS"],
-  CANCELLED: ["REQUESTED", "MATCHED"],
-};
 
 export async function updateRideStatus(rideId, newStatus) {
   const previousStatuses = allowedPreviousStatuses[newStatus];
 
-  // This status has no valid incoming transition.
+  // MATCHED must only be reached through driver assignment.
   if (!previousStatuses) {
     return null;
   }
 
-  const query = `
-        UPDATE rides
-        SET
-            status = $2,
-            updated_at = NOW()
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Lock the ride to serialize concurrent status transitions.
+    const rideResult = await client.query(
+      `
+        SELECT id, driver_id, status
+        FROM rides
         WHERE id = $1
-          AND status = ANY($3::varchar[])
-        RETURNING
-            id,
-            rider_id,
-            driver_id,
-            pickup_latitude,
-            pickup_longitude,
-            dropoff_latitude,
-            dropoff_longitude,
-            status,
-            created_at,
-            updated_at
-    `;
+        FOR UPDATE
+      `,
+      [rideId],
+    );
 
-  const values = [rideId, newStatus, previousStatuses];
+    const currentRide = rideResult.rows[0];
 
-  const result = await pool.query(query, values);
+    if (!currentRide) {
+      await client.query("ROLLBACK");
+      return null;
+    }
 
-  return result.rows[0] ?? null;
+    if (!previousStatuses.includes(currentRide.status)) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const updateResult = await client.query(
+      `
+        UPDATE rides
+        SET status = $2, updated_at = NOW()
+        WHERE id = $1
+        RETURNING ${RIDE_FIELDS}
+      `,
+      [rideId, newStatus],
+    );
+
+    const updatedRide = updateResult.rows[0];
+
+    // Release an assigned driver when the ride ends or is cancelled.
+    const shouldReleaseDriver =
+      currentRide.driver_id !== null &&
+      ["COMPLETED", "CANCELLED"].includes(newStatus);
+
+    if (shouldReleaseDriver) {
+      await client.query(
+        `
+          INSERT INTO outbox_events (
+            event_type,
+            aggregate_id,
+            payload
+          )
+          VALUES ($1, $2, $3::jsonb)
+        `,
+        [
+          "DRIVER_STATUS_UPDATE",
+          rideId,
+          JSON.stringify({
+            driverId: currentRide.driver_id,
+            status: "AVAILABLE",
+          }),
+        ],
+      );
+    }
+
+    await client.query("COMMIT");
+    return updatedRide;
+  } catch (error) {
+    await rollbackQuietly(client);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function assignDriverToRide(rideId, driverId) {
@@ -112,8 +160,7 @@ export async function assignDriverToRide(rideId, driverId) {
   try {
     await client.query("BEGIN");
 
-    // Lock the ride so concurrent requests cannot modify
-    // this ride simultaneously.
+    // Lock the ride before checking whether it can be assigned.
     const rideResult = await client.query(
       `
         SELECT id, driver_id, status
@@ -131,71 +178,59 @@ export async function assignDriverToRide(rideId, driverId) {
       return null;
     }
 
-    // Only unassigned rides awaiting a driver can be matched.
     if (ride.status !== "REQUESTED" || ride.driver_id !== null) {
       await client.query("ROLLBACK");
       return null;
     }
 
-    const updateQuery = `
-      UPDATE rides
-      SET
-        driver_id = $2,
-        status = 'MATCHED',
-        updated_at = NOW()
-      WHERE id = $1
-        AND status = 'REQUESTED'
-        AND driver_id IS NULL
-      RETURNING
-        id,
-        rider_id,
-        driver_id,
-        pickup_latitude,
-        pickup_longitude,
-        dropoff_latitude,
-        dropoff_longitude,
-        status,
-        created_at,
-        updated_at
-    `;
+    const updateResult = await client.query(
+      `
+        UPDATE rides
+        SET
+          driver_id = $2,
+          status = 'MATCHED',
+          updated_at = NOW()
+        WHERE id = $1
+          AND status = 'REQUESTED'
+          AND driver_id IS NULL
+        RETURNING ${RIDE_FIELDS}
+      `,
+      [rideId, driverId],
+    );
 
-    const result = await client.query(updateQuery, [rideId, driverId]);
-
-    if (result.rows.length === 0) {
+    if (updateResult.rows.length === 0) {
       await client.query("ROLLBACK");
       return null;
     }
 
-    const assignedRide = result.rows[0];
+    const assignedRide = updateResult.rows[0];
 
-    // Record the required driver-status update in the same transaction.
-    const outboxQuery = `
-      INSERT INTO outbox_events (
-        event_type,
-        aggregate_id,
-        payload
-      )
-      VALUES ($1, $2, $3::jsonb)
-    `;
-
-    const eventPayload = {
-      driverId: assignedRide.driver_id,
-      status: "ON_TRIP",
-    };
-
-    await client.query(outboxQuery, [
-      "DRIVER_STATUS_UPDATE",
-      assignedRide.id,
-      JSON.stringify(eventPayload),
-    ]);
+    // Persist the driver-status event in the same transaction.
+    await client.query(
+      `
+        INSERT INTO outbox_events (
+          event_type,
+          aggregate_id,
+          payload
+        )
+        VALUES ($1, $2, $3::jsonb)
+      `,
+      [
+        "DRIVER_STATUS_UPDATE",
+        assignedRide.id,
+        JSON.stringify({
+          driverId: assignedRide.driver_id,
+          status: "ON_TRIP",
+        }),
+      ],
+    );
 
     await client.query("COMMIT");
-
     return assignedRide;
   } catch (error) {
-    await client.query("ROLLBACK");
+    await rollbackQuietly(client);
 
-    // PostgreSQL unique-constraint violation.
+    // A unique constraint can reject a conflicting assignment.
     if (error.code === "23505") {
       return null;
     }
