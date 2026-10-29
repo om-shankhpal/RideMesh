@@ -1,4 +1,3 @@
-
 import { pool } from "../config/database.js";
 
 const RIDE_FIELDS = `
@@ -13,6 +12,17 @@ const RIDE_FIELDS = `
   created_at,
   updated_at
 `;
+
+export async function findAllRides() {
+  const query = `
+    SELECT ${RIDE_FIELDS}
+    FROM rides
+    ORDER BY created_at DESC
+  `;
+
+  const result = await pool.query(query);
+  return result.rows;
+}
 
 const allowedPreviousStatuses = {
   IN_PROGRESS: ["MATCHED"],

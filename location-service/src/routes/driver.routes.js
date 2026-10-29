@@ -1,7 +1,9 @@
+
 import { Router } from "express";
 import {
   createDriver,
   findDriverById,
+  findAllDrivers,
   updateDriverStatus,
 } from "../repositories/driver.repository.js";
 import { createDriverSchema } from "../validation/driver.schema.js";
@@ -14,6 +16,16 @@ import { findNearbyDriverIds } from "../repositories/driver-location.repository.
 import { findAvailableDriversByIds } from "../repositories/driver.repository.js";
 
 const router = Router();
+
+// GET /drivers — list all drivers
+router.get("/", async (req, res) => {
+  const drivers = await findAllDrivers();
+
+  return res.status(200).json({
+    data: drivers,
+    count: drivers.length,
+  });
+});
 
 router.post("/", async (req, res) => {
   const validation = createDriverSchema.safeParse(req.body);

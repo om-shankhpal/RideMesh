@@ -3,6 +3,7 @@ import { Router } from "express";
 import {
   createRide,
   findRideById,
+  findAllRides,
   updateRideStatus,
   assignDriverToRide,
 } from "../repositories/ride.repository.js";
@@ -15,6 +16,19 @@ import {
 import { rideIdSchema } from "../validation/ride-id.schema.js";
 
 const router = Router();
+
+router.get("/", async (req, res, next) => {
+  try {
+    const rides = await findAllRides();
+
+    return res.status(200).json({
+      data: rides,
+      count: rides.length,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.get("/:id", async (req, res, next) => {
   const validation = rideIdSchema.safeParse(req.params.id);
