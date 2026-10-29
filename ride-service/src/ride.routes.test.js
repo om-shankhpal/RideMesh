@@ -333,6 +333,57 @@ describe("assignDriverToRide", () => {
     }
   });
 
+  it("releases the driver when a ride is completed", async () => {
+    let ride;
+
+    const driverId = "33333333-3333-4333-8333-333333333333";
+
+    try {
+      ride = await createRide(rideDetails);
+
+      const assignedRide = await assignDriverToRide(ride.id, driverId);
+      expect(assignedRide.status).toBe("MATCHED");
+
+      const startedRide = await updateRideStatus(ride.id, "IN_PROGRESS");
+      expect(startedRide.status).toBe("IN_PROGRESS");
+
+      const completedRide = await updateRideStatus(ride.id, "COMPLETED");
+      expect(completedRide.status).toBe("COMPLETED");
+
+      const eventResult = await pool.query(
+        `
+        SELECT event_type, payload, status
+        FROM outbox_events
+        WHERE aggregate_id = $1
+        ORDER BY created_at ASC
+      `,
+        [ride.id],
+      );
+
+      expect(eventResult.rows).toHaveLength(2);
+
+      expect(eventResult.rows[0].event_type).toBe("DRIVER_STATUS_UPDATE");
+      expect(eventResult.rows[0].payload).toEqual({
+        driverId,
+        status: "ON_TRIP",
+      });
+
+      expect(eventResult.rows[1].event_type).toBe("DRIVER_STATUS_UPDATE");
+      expect(eventResult.rows[1].payload).toEqual({
+        driverId,
+        status: "AVAILABLE",
+      });
+      expect(eventResult.rows[1].status).toBe("PENDING");
+    } finally {
+      if (ride) {
+        await pool.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
+          ride.id,
+        ]);
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
+
   it("rolls back the ride assignment if creating the outbox event fails", async () => {
     let ride;
 
@@ -380,6 +431,156 @@ describe("assignDriverToRide", () => {
         DROP FUNCTION IF EXISTS reject_test_outbox_insert()
       `);
 
+      if (ride) {
+        await pool.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
+          ride.id,
+        ]);
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
+
+  it("rolls back ride completion if creating the outbox event fails", async () => {
+    let ride;
+
+    const driverId = "33333333-3333-4333-8333-333333333333";
+
+    try {
+      ride = await createRide(rideDetails);
+
+      await assignDriverToRide(ride.id, driverId);
+      await updateRideStatus(ride.id, "IN_PROGRESS");
+
+      // Simulate a database failure when inserting the AVAILABLE event.
+      await pool.query(`
+      CREATE OR REPLACE FUNCTION reject_test_outbox_insert()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        RAISE EXCEPTION 'Simulated outbox insert failure';
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+
+      await pool.query(`
+      CREATE TRIGGER reject_test_outbox_insert_trigger
+      BEFORE INSERT ON outbox_events
+      FOR EACH ROW
+      EXECUTE FUNCTION reject_test_outbox_insert()
+    `);
+
+      await expect(updateRideStatus(ride.id, "COMPLETED")).rejects.toThrow(
+        "Simulated outbox insert failure",
+      );
+
+      // Completion must roll back: the ride remains IN_PROGRESS.
+      const rideResult = await pool.query(
+        "SELECT driver_id, status FROM rides WHERE id = $1",
+        [ride.id],
+      );
+
+      expect(rideResult.rows[0].driver_id).toBe(driverId);
+      expect(rideResult.rows[0].status).toBe("IN_PROGRESS");
+
+      // The failed transaction must not leave an AVAILABLE event.
+      const eventResult = await pool.query(
+        `SELECT payload
+       FROM outbox_events
+       WHERE aggregate_id = $1`,
+        [ride.id],
+      );
+
+      expect(eventResult.rows).toHaveLength(1);
+      expect(eventResult.rows[0].payload).toEqual({
+        driverId,
+        status: "ON_TRIP",
+      });
+    } finally {
+      // Always remove the trigger, even if an assertion fails.
+      await pool.query(`
+      DROP TRIGGER IF EXISTS reject_test_outbox_insert_trigger
+      ON outbox_events
+    `);
+
+      await pool.query(`
+      DROP FUNCTION IF EXISTS reject_test_outbox_insert()
+    `);
+
+      if (ride) {
+        await pool.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
+          ride.id,
+        ]);
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
+
+  it("cancels a requested ride without creating a driver-release event", async () => {
+    let ride;
+
+    try {
+      ride = await createRide(rideDetails);
+
+      const cancelledRide = await updateRideStatus(ride.id, "CANCELLED");
+
+      expect(cancelledRide.status).toBe("CANCELLED");
+      expect(cancelledRide.driver_id).toBeNull();
+
+      const eventResult = await pool.query(
+        `SELECT event_type, payload
+       FROM outbox_events
+       WHERE aggregate_id = $1`,
+        [ride.id],
+      );
+
+      expect(eventResult.rows).toHaveLength(0);
+    } finally {
+      if (ride) {
+        await pool.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
+          ride.id,
+        ]);
+        await pool.query("DELETE FROM rides WHERE id = $1", [ride.id]);
+      }
+    }
+  });
+
+  it("releases the driver when a matched ride is cancelled", async () => {
+    let ride;
+    const driverId = "44444444-4444-4444-8444-444444444444";
+
+    try {
+      ride = await createRide(rideDetails);
+
+      const assignedRide = await assignDriverToRide(ride.id, driverId);
+
+      expect(assignedRide.status).toBe("MATCHED");
+
+      const cancelledRide = await updateRideStatus(ride.id, "CANCELLED");
+
+      expect(cancelledRide.status).toBe("CANCELLED");
+
+      const eventResult = await pool.query(
+        `SELECT event_type, payload, status
+       FROM outbox_events
+       WHERE aggregate_id = $1
+       ORDER BY created_at ASC, id ASC`,
+        [ride.id],
+      );
+
+      expect(eventResult.rows).toHaveLength(2);
+
+      expect(eventResult.rows[0].event_type).toBe("DRIVER_STATUS_UPDATE");
+      expect(eventResult.rows[0].payload).toEqual({
+        driverId,
+        status: "ON_TRIP",
+      });
+
+      expect(eventResult.rows[1].event_type).toBe("DRIVER_STATUS_UPDATE");
+      expect(eventResult.rows[1].payload).toEqual({
+        driverId,
+        status: "AVAILABLE",
+      });
+      expect(eventResult.rows[1].status).toBe("PENDING");
+    } finally {
       if (ride) {
         await pool.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
           ride.id,
