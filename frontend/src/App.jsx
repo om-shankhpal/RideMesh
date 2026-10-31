@@ -810,7 +810,36 @@ function DriversPage({
   );
 }
 
-function RidesPage({ rides, ridesLoading, ridesError }) {
+function RidesPage({
+  rides,
+  ridesLoading,
+  ridesError,
+  rideActionId,
+  rideActionError,
+  onRideAction,
+}) {
+  function getActions(status) {
+    switch (status) {
+      case "REQUESTED":
+        return [
+          { label: "Match driver", action: "MATCH" },
+          { label: "Cancel", action: "CANCEL" },
+        ];
+
+      case "MATCHED":
+        return [
+          { label: "Start ride", action: "START" },
+          { label: "Cancel", action: "CANCEL" },
+        ];
+
+      case "IN_PROGRESS":
+        return [{ label: "Complete ride", action: "COMPLETE" }];
+
+      default:
+        return [];
+    }
+  }
+
   return (
     <section className="page-section">
       <div className="section-intro">
@@ -825,7 +854,13 @@ function RidesPage({ rides, ridesLoading, ridesError }) {
       </div>
 
       {ridesLoading && <p role="status">Loading rides from Ride Service...</p>}
+
       {ridesError && <p role="alert">Unable to load rides: {ridesError}</p>}
+
+      {rideActionError && (
+        <p role="alert">Ride action failed: {rideActionError}</p>
+      )}
+
       {!ridesLoading && !ridesError && rides.length === 0 && (
         <p>No rides found in the database.</p>
       )}
@@ -836,39 +871,59 @@ function RidesPage({ rides, ridesLoading, ridesError }) {
             <thead>
               <tr>
                 <th>RIDE ID</th>
-
                 <th>ROUTE</th>
-
                 <th>DRIVER</th>
-
                 <th>STATUS</th>
-
                 <th>CREATED</th>
+                <th>ACTIONS</th>
               </tr>
             </thead>
 
             <tbody>
-              {rides.map((ride) => (
-                <tr key={ride.id}>
-                  <td>
-                    <span className="ride-id">{ride.id}</span>
+              {rides.map((ride) => {
+                const actions = getActions(ride.status);
+                const isProcessing = rideActionId === ride.id;
 
-                    <small>{ride.rider}</small>
-                  </td>
+                return (
+                  <tr key={ride.id}>
+                    <td>
+                      <span className="ride-id">{ride.id}</span>
+                      <small>{ride.rider}</small>
+                    </td>
 
-                  <td>
-                    {ride.pickup} → {ride.dropoff}
-                  </td>
+                    <td>
+                      {ride.pickup} → {ride.dropoff}
+                    </td>
 
-                  <td>{ride.driver || "Unassigned"}</td>
+                    <td>{ride.driver || "Unassigned"}</td>
 
-                  <td>
-                    <StatusBadge status={ride.status} />
-                  </td>
+                    <td>
+                      <StatusBadge status={ride.status} />
+                    </td>
 
-                  <td className="time-cell">{ride.time}</td>
-                </tr>
-              ))}
+                    <td className="time-cell">{ride.time}</td>
+
+                    <td>
+                      <div className="ride-actions">
+                        {actions.length === 0 ? (
+                          <span>—</span>
+                        ) : (
+                          actions.map(({ label, action }) => (
+                            <button
+                              key={action}
+                              type="button"
+                              disabled={rideActionId !== null}
+                              onClick={() => onRideAction(ride.id, action)}
+                            >
+                              {isProcessing ? "Processing..." : label}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -897,6 +952,37 @@ function App() {
   const [serviceHealth, setServiceHealth] = useState([]);
 
   const [healthLoading, setHealthLoading] = useState(true);
+
+  const [rideActionId, setRideActionId] = useState(null);
+  const [rideActionError, setRideActionError] = useState("");
+
+  async function handleRideAction(rideId, action) {
+    try {
+      setRideActionId(rideId);
+      setRideActionError("");
+
+      if (action === "MATCH") {
+        await api.matchRide(rideId);
+      } else {
+        const nextStatus = {
+          START: "IN_PROGRESS",
+          COMPLETE: "COMPLETED",
+          CANCEL: "CANCELLED",
+        }[action];
+
+        await api.updateRideStatus(rideId, nextStatus);
+      }
+
+      // Refresh rides after a successful action.
+      const result = await api.getRides();
+      setRides((result.data ?? []).map(mapRideRecord));
+      setRidesError("");
+    } catch (error) {
+      setRideActionError(error.message || "Unable to update ride");
+    } finally {
+      setRideActionId(null);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -1081,6 +1167,9 @@ function App() {
               rides={rides}
               ridesLoading={ridesLoading}
               ridesError={ridesError}
+              rideActionId={rideActionId}
+              rideActionError={rideActionError}
+              onRideAction={handleRideAction}
             />
           )}
 
