@@ -5,6 +5,16 @@ import "./App.css";
 import { fetchServiceHealth } from "./api/health.js";
 
 import { api } from "./api/client.js";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Polyline,
+} from "react-leaflet";
+
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 function formatRideTime(value) {
   if (!value) return "—";
@@ -183,143 +193,142 @@ function Sidebar({ activePage, setActivePage }) {
   );
 }
 
+const pickupPosition = [19.0602, 72.8365];
+const destinationPosition = [19.0475, 72.8742];
+
+const pickupIcon = L.divIcon({
+  className: "custom-map-icon",
+  html: '<div class="map-pin-icon pickup-marker">P</div>',
+  iconSize: [34, 34],
+  iconAnchor: [17, 17],
+});
+
+const destinationIcon = L.divIcon({
+  className: "custom-map-icon",
+  html: '<div class="map-pin-icon destination-marker">D</div>',
+  iconSize: [34, 34],
+  iconAnchor: [17, 17],
+});
+
+const driverIcon = (busy, selected) =>
+  L.divIcon({
+    className: "custom-map-icon",
+    html: `<div class="car-marker ${busy ? "busy" : ""} ${
+      selected ? "selected" : ""
+    }">⌁</div>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+  });
+
+function driverPosition(driver) {
+  // These are simulated positions, not actual driver GPS coordinates.
+  const x = Number(driver.x ?? 50);
+  const y = Number(driver.y ?? 50);
+
+  return [19.035 + (y / 100) * 0.045, 72.815 + (x / 100) * 0.075];
+}
+
 function CityMap({ drivers, selectedDriver, setSelectedDriver }) {
+  const selected = drivers.find((driver) => driver.id === selectedDriver);
+
   return (
     <div className="map-canvas">
-      <div className="map-neighborhood neighborhood-one">BANDRA WEST</div>
+      <MapContainer
+        center={[19.055, 72.85]}
+        zoom={13}
+        scrollWheelZoom
+        className="leaflet-map"
+      >
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
 
-      <div className="map-neighborhood neighborhood-two">KHAR</div>
+        <Polyline
+          positions={[pickupPosition, destinationPosition]}
+          pathOptions={{
+            color: "#26b96b",
+            weight: 5,
+            opacity: 0.85,
+            dashArray: "10 9",
+          }}
+        />
 
-      <div className="map-neighborhood neighborhood-three">BANDRA EAST</div>
+        <Marker position={pickupPosition} icon={pickupIcon}>
+          <Popup>Illustrative pickup location</Popup>
+        </Marker>
 
-      <div className="map-neighborhood neighborhood-four">MAHIM</div>
+        <Marker position={destinationPosition} icon={destinationIcon}>
+          <Popup>Illustrative destination</Popup>
+        </Marker>
 
-      <div className="map-neighborhood neighborhood-five">BKC</div>
+        {drivers.map((driver) => (
+          <Marker
+            key={driver.id}
+            position={driverPosition(driver)}
+            icon={driverIcon(
+              driver.status === "ON_TRIP",
+              selectedDriver === driver.id,
+            )}
+            eventHandlers={{
+              click: () =>
+                setSelectedDriver(
+                  selectedDriver === driver.id ? null : driver.id,
+                ),
+            }}
+          >
+            <Popup>
+              <strong>{driver.name}</strong>
+              <br />
+              {driver.vehicle}
+              <br />
+              {driver.status.replaceAll("_", " ")}
+              <br />
+              <small>Simulated map position</small>
+            </Popup>
+          </Marker>
+        ))}
+      </MapContainer>
 
-      <div className="map-neighborhood neighborhood-six">SANTACRUZ</div>
+      <div className="map-floating-card">
+        <div className="map-card-heading">
+          <span className="map-card-pulse" />
+          DRIVER NETWORK
+        </div>
 
-      <div className="water water-one" />
-
-      <div className="water water-two" />
-
-      <div className="park park-one">
-        <span>◌</span>
-
-        <small>Joggers' Park</small>
+        <strong>{drivers.length} drivers</strong>
+        <span>
+          {drivers.filter((driver) => driver.status === "AVAILABLE").length}{" "}
+          available nearby
+        </span>
       </div>
 
-      <div className="park park-two">
-        <span>◌</span>
-
-        <small>Garden</small>
-      </div>
-
-      <div className="road road-h road-h1" />
-
-      <div className="road road-h road-h2" />
-
-      <div className="road road-h road-h3" />
-
-      <div className="road road-h road-h4" />
-
-      <div className="road road-h road-h5" />
-
-      <div className="road road-v road-v1" />
-
-      <div className="road road-v road-v2" />
-
-      <div className="road road-v road-v3" />
-
-      <div className="road road-v road-v4" />
-
-      <div className="road road-v road-v5" />
-
-      <div className="road road-diagonal road-d1" />
-
-      <div className="road road-diagonal road-d2" />
-
-      <div className="map-route route-one" />
-
-      <div className="map-route route-two" />
-
-      <div className="map-pin pickup-pin" style={{ left: "58%", top: "43%" }}>
-        <span>＋</span>
-
-        <small>Pickup</small>
-      </div>
-
-      <div className="map-pin dropoff-pin" style={{ left: "85%", top: "55%" }}>
-        <span>↗</span>
-
-        <small>Destination</small>
-      </div>
-
-      {drivers.map((driver) => (
-        <button
-          key={driver.id}
-          className={`driver-marker ${
-            driver.status === "ON_TRIP" ? "busy" : ""
-          } ${selectedDriver === driver.id ? "selected" : ""}`}
-          style={{ left: `${driver.x}%`, top: `${driver.y}%` }}
-          title={`${driver.name} · ${driver.status}`}
-          onClick={() =>
-            setSelectedDriver(selectedDriver === driver.id ? null : driver.id)
-          }
-          aria-label={`Select ${driver.name}`}
-        >
-          <span>⌁</span>
-        </button>
-      ))}
-
-      {selectedDriver && (
+      {selected && (
         <div className="map-selection">
           <button
             className="selection-close"
             onClick={() => setSelectedDriver(null)}
+            aria-label="Close driver details"
           >
             ×
           </button>
 
-          {(() => {
-            const driver = drivers.find((item) => item.id === selectedDriver);
+          <div className="selection-top">
+            <div className="avatar driver-avatar">DR</div>
+            <div>
+              <strong>{selected.name}</strong>
+              <span>{selected.id}</span>
+            </div>
+          </div>
 
-            return driver ? (
-              <>
-                <div className="selection-top">
-                  <div className="avatar driver-avatar">DR</div>
-
-                  <div>
-                    <strong>{driver.name}</strong>
-
-                    <span>{driver.id}</span>
-                  </div>
-                </div>
-
-                <StatusBadge status={driver.status} />
-
-                <p>{driver.vehicle}</p>
-              </>
-            ) : null;
-          })()}
+          <StatusBadge status={selected.status} />
+          <p>{selected.vehicle}</p>
+          <small>Illustrative position · Not GPS data</small>
         </div>
       )}
 
-      <div className="map-legend">
-        <span>
-          <i className="legend-available" /> Available
-        </span>
-
-        <span>
-          <i className="legend-busy" /> On trip
-        </span>
-      </div>
-
-      <div className="map-scale">
-        <span /> 500 m
-      </div>
-
-      <div className="map-compass">
-        <span>N</span> ↑
+      <div className="map-disclaimer">
+        Illustrative driver positions · Not live GPS
       </div>
     </div>
   );
@@ -742,15 +751,84 @@ function Overview({
 
 function DriversPage({
   drivers,
-
   selectedDriver,
-
   setSelectedDriver,
-
   driversLoading,
-
   driversError,
+  refreshDrivers,
 }) {
+  const [formMode, setFormMode] = useState(null);
+  const [editingDriverId, setEditingDriverId] = useState(null);
+
+  const [name, setName] = useState("");
+  const [vehicleType, setVehicleType] = useState("BIKE");
+
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+  function openAddForm() {
+    setFormMode("add");
+    setEditingDriverId(null);
+    setName("");
+    setVehicleType("BIKE");
+    setFormError("");
+    setSuccessMessage("");
+  }
+
+  function openEditForm(driver) {
+    setFormMode("edit");
+    setEditingDriverId(driver.id);
+    setName(driver.name);
+    setVehicleType(driver.vehicle);
+    setFormError("");
+    setSuccessMessage("");
+  }
+
+  function closeForm() {
+    setFormMode(null);
+    setEditingDriverId(null);
+    setFormError("");
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
+    setFormError("");
+    setSuccessMessage("");
+
+    const trimmedName = name.trim();
+
+    if (trimmedName.length < 2 || trimmedName.length > 100) {
+      setFormError("Name must contain between 2 and 100 characters.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const driverData = {
+        name: trimmedName,
+        vehicleType,
+      };
+
+      if (formMode === "add") {
+        await api.createDriver(driverData);
+        setSuccessMessage("Driver created successfully.");
+      } else {
+        await api.updateDriver(editingDriverId, driverData);
+        setSuccessMessage("Driver details updated successfully.");
+      }
+
+      await refreshDrivers();
+      closeForm();
+    } catch (error) {
+      setFormError(error.message || "Unable to save driver.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="page-section">
       <div className="section-intro">
@@ -759,11 +837,22 @@ function DriversPage({
         <h1>Driver directory</h1>
 
         <p>
-          Driver records loaded from the Location Service database. Map
+          Manage driver records from the Location Service database. Map
           positions remain illustrative because this list does not contain GPS
           coordinates.
         </p>
+
+        <button
+          type="button"
+          className="button-primary"
+          onClick={openAddForm}
+          disabled={saving}
+        >
+          + Add driver
+        </button>
       </div>
+
+      {successMessage && <p role="status">{successMessage}</p>}
 
       {driversLoading && (
         <p role="status">Loading drivers from Location Service...</p>
@@ -773,37 +862,112 @@ function DriversPage({
         <p role="alert">Unable to load drivers: {driversError}</p>
       )}
 
+      {formMode && (
+        <div
+          className="panel"
+          style={{ padding: "24px", marginBottom: "24px" }}
+        >
+          <h2>{formMode === "add" ? "Add new driver" : "Edit driver"}</h2>
+
+          <form onSubmit={handleSubmit}>
+            <div style={{ marginBottom: "16px" }}>
+              <label htmlFor="driver-name">Driver name</label>
+
+              <input
+                id="driver-name"
+                type="text"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Enter driver name"
+                minLength={2}
+                maxLength={100}
+                required
+                disabled={saving}
+              />
+            </div>
+
+            <div style={{ marginBottom: "16px" }}>
+              <label htmlFor="driver-vehicle">Vehicle type</label>
+
+              <select
+                id="driver-vehicle"
+                value={vehicleType}
+                onChange={(event) => setVehicleType(event.target.value)}
+                disabled={saving}
+              >
+                <option value="BIKE">Bike</option>
+                <option value="CAR">Car</option>
+              </select>
+            </div>
+
+            {formError && <p role="alert">{formError}</p>}
+
+            <div style={{ display: "flex", gap: "12px" }}>
+              <button
+                type="submit"
+                className="button-primary"
+                disabled={saving}
+              >
+                {saving
+                  ? "Saving..."
+                  : formMode === "add"
+                    ? "Create driver"
+                    : "Save changes"}
+              </button>
+
+              <button type="button" onClick={closeForm} disabled={saving}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {!driversLoading && !driversError && drivers.length === 0 && (
         <p>No drivers found in the database.</p>
       )}
 
       <div className="driver-grid">
         {drivers.map((driver) => (
-          <button
+          <article
             key={driver.id}
             className={`driver-card ${
               selectedDriver === driver.id ? "driver-card-selected" : ""
             }`}
-            onClick={() =>
-              setSelectedDriver(selectedDriver === driver.id ? null : driver.id)
-            }
           >
-            <div className="driver-card-top">
-              <div className="avatar driver-avatar">DR</div>
+            <button
+              type="button"
+              className="driver-card-select"
+              onClick={() =>
+                setSelectedDriver(
+                  selectedDriver === driver.id ? null : driver.id,
+                )
+              }
+            >
+              <div className="driver-card-top">
+                <div className="avatar driver-avatar">DR</div>
+                <StatusBadge status={driver.status} />
+              </div>
 
-              <StatusBadge status={driver.status} />
-            </div>
+              <strong>{driver.name}</strong>
 
-            <strong>{driver.name}</strong>
+              <span className="driver-id">{driver.id}</span>
 
-            <span className="driver-id">{driver.id}</span>
+              <span className="driver-vehicle">{driver.vehicle}</span>
 
-            <span className="driver-vehicle">{driver.vehicle}</span>
+              <span className="driver-card-link">
+                Inspect on map <span>↗</span>
+              </span>
+            </button>
 
-            <span className="driver-card-link">
-              Inspect on map <span>↗</span>
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => openEditForm(driver)}
+              disabled={saving}
+            >
+              Edit details
+            </button>
+          </article>
         ))}
       </div>
     </section>
@@ -934,13 +1098,10 @@ function RidesPage({
 
 function App() {
   const [activePage, setActivePage] = useState("Overview");
-
   const [selectedDriver, setSelectedDriver] = useState(null);
 
   const [drivers, setDrivers] = useState([]);
-
   const [driversLoading, setDriversLoading] = useState(true);
-
   const [driversError, setDriversError] = useState("");
 
   const [rides, setRides] = useState([]);
@@ -950,12 +1111,39 @@ function App() {
   const [events] = useState(initialEvents);
 
   const [serviceHealth, setServiceHealth] = useState([]);
-
   const [healthLoading, setHealthLoading] = useState(true);
 
   const [rideActionId, setRideActionId] = useState(null);
   const [rideActionError, setRideActionError] = useState("");
 
+  // Fetch drivers and convert database records into frontend format.
+  async function refreshDrivers() {
+    try {
+      setDriversLoading(true);
+
+      const result = await api.getDrivers();
+
+      const loadedDrivers = (result.data ?? []).map((driver, index) => ({
+        id: driver.id,
+        name: driver.name,
+        vehicle: driver.vehicle_type,
+        status: driver.status,
+
+        // Simulated map positions, not actual GPS coordinates.
+        x: 12 + ((index * 23) % 76),
+        y: 14 + ((index * 31) % 72),
+      }));
+
+      setDrivers(loadedDrivers);
+      setDriversError("");
+    } catch (error) {
+      setDriversError(error.message || "Unknown error");
+    } finally {
+      setDriversLoading(false);
+    }
+  }
+
+  // Handle ride matching and lifecycle actions.
   async function handleRideAction(rideId, action) {
     try {
       setRideActionId(rideId);
@@ -975,8 +1163,12 @@ function App() {
 
       // Refresh rides after a successful action.
       const result = await api.getRides();
+
       setRides((result.data ?? []).map(mapRideRecord));
       setRidesError("");
+
+      // Refresh driver statuses as matching can change driver availability.
+      await refreshDrivers();
     } catch (error) {
       setRideActionError(error.message || "Unable to update ride");
     } finally {
@@ -984,56 +1176,16 @@ function App() {
     }
   }
 
+  // Initial driver loading and automatic refresh.
   useEffect(() => {
-    let active = true;
+    refreshDrivers();
 
-    async function loadDrivers() {
-      try {
-        const result = await api.getDrivers();
+    const intervalId = setInterval(refreshDrivers, 15000);
 
-        //*&#x20;The API returns database field names; adapt them to the UI shape.*
-
-        const loadedDrivers = (result.data ?? []).map((driver, index) => ({
-          id: driver.id,
-
-          name: driver.name,
-
-          vehicle: driver.vehicle_type,
-
-          status: driver.status,
-
-          //*&#x20;The list endpoint has no coordinates, so these are schematic positions.*
-
-          x: 12 + ((index * 23) % 76),
-
-          y: 14 + ((index * 31) % 72),
-        }));
-
-        if (active) {
-          setDrivers(loadedDrivers);
-
-          setDriversError("");
-        }
-      } catch (error) {
-        if (active) {
-          setDriversError(error.message || "Unknown error");
-        }
-      } finally {
-        if (active) setDriversLoading(false);
-      }
-    }
-
-    loadDrivers();
-
-    const intervalId = setInterval(loadDrivers, 15000);
-
-    return () => {
-      active = false;
-
-      clearInterval(intervalId);
-    };
+    return () => clearInterval(intervalId);
   }, []);
 
+  // Initial ride loading and automatic refresh.
   useEffect(() => {
     let active = true;
 
@@ -1047,13 +1199,18 @@ function App() {
           setRidesError("");
         }
       } catch (error) {
-        if (active) setRidesError(error.message || "Unknown error");
+        if (active) {
+          setRidesError(error.message || "Unknown error");
+        }
       } finally {
-        if (active) setRidesLoading(false);
+        if (active) {
+          setRidesLoading(false);
+        }
       }
     }
 
     loadRides();
+
     const intervalId = setInterval(loadRides, 15000);
 
     return () => {
@@ -1062,16 +1219,22 @@ function App() {
     };
   }, []);
 
+  // Backend service health monitoring.
   useEffect(() => {
     let active = true;
 
     async function checkServices() {
-      const results = await fetchServiceHealth();
+      try {
+        const results = await fetchServiceHealth();
 
-      if (active) {
-        setServiceHealth(results);
-
-        setHealthLoading(false);
+        if (active) {
+          setServiceHealth(results);
+          setHealthLoading(false);
+        }
+      } catch (error) {
+        if (active) {
+          setHealthLoading(false);
+        }
       }
     }
 
@@ -1081,7 +1244,6 @@ function App() {
 
     return () => {
       active = false;
-
       clearInterval(intervalId);
     };
   }, []);
@@ -1094,9 +1256,7 @@ function App() {
         <header className="topbar">
           <div className="breadcrumb">
             <span>Workspace</span>
-
             <span className="breadcrumb-slash">/</span>
-
             <strong>{activePage}</strong>
           </div>
 
@@ -1180,6 +1340,7 @@ function App() {
               setSelectedDriver={setSelectedDriver}
               driversLoading={driversLoading}
               driversError={driversError}
+              refreshDrivers={refreshDrivers}
             />
           )}
         </div>

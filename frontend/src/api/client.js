@@ -1,4 +1,3 @@
-
 const API_BASES = {
   location: "/api/location",
   rides: "/api/rides",
@@ -18,7 +17,7 @@ async function request(base, path, options = {}) {
 
   if (!response.ok) {
     throw new Error(
-      result?.error || result?.message || `Request failed (${response.status})`
+      result?.error || result?.message || `Request failed (${response.status})`,
     );
   }
 
@@ -37,41 +36,47 @@ export const api = {
     return request(base, "/health");
   },
 
-  getDrivers: () =>
-    request(API_BASES.location, "/drivers"),
+  getDrivers: () => request(API_BASES.location, "/drivers"),
+
+  createDriver: (driver) =>
+    request(API_BASES.location, "/drivers", {
+      method: "POST",
+      body: JSON.stringify(driver),
+    }),
 
   getNearbyDrivers: ({ latitude, longitude, radius = 5000 }) =>
     request(
       API_BASES.location,
-      `/drivers/nearby?latitude=${latitude}&longitude=${longitude}&radius=${radius}`
+      `/drivers/nearby?latitude=${latitude}&longitude=${longitude}&radius=${radius}`,
     ),
 
   getDriver: (id) =>
     request(API_BASES.location, `/drivers/${encodeURIComponent(id)}`),
 
+  updateDriver: (id, driver) =>
+  request(
+    API_BASES.location,
+    `/drivers/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(driver),
+    }
+  ),
+  
   updateDriverLocation: (id, location) =>
-    request(
-      API_BASES.location,
-      `/drivers/${encodeURIComponent(id)}/location`,
-      {
-        method: "PATCH",
-        body: JSON.stringify(location),
-      }
-    ),
+    request(API_BASES.location, `/drivers/${encodeURIComponent(id)}/location`, {
+      method: "PATCH",
+      body: JSON.stringify(location),
+    }),
 
   updateDriverStatus: (id, status) =>
-    request(
-      API_BASES.location,
-      `/drivers/${encodeURIComponent(id)}/status`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({ status }),
-      }
-    ),
+    request(API_BASES.location, `/drivers/${encodeURIComponent(id)}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
 
   // Ride Service
-  getRides: () =>
-    request(API_BASES.rides, ""),
+  getRides: () => request(API_BASES.rides, ""),
 
   createRide: (ride) =>
     request(API_BASES.rides, "", {
@@ -79,8 +84,7 @@ export const api = {
       body: JSON.stringify(ride),
     }),
 
-  getRide: (id) =>
-    request(API_BASES.rides, `/${encodeURIComponent(id)}`),
+  getRide: (id) => request(API_BASES.rides, `/${encodeURIComponent(id)}`),
 
   updateRideStatus: (id, status) =>
     request(API_BASES.rides, `/${encodeURIComponent(id)}/status`, {

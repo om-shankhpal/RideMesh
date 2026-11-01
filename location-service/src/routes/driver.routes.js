@@ -1,10 +1,10 @@
-
 import { Router } from "express";
 import {
   createDriver,
   findDriverById,
   findAllDrivers,
   updateDriverStatus,
+  updateDriverDetails,
 } from "../repositories/driver.repository.js";
 import { createDriverSchema } from "../validation/driver.schema.js";
 import { driverIdSchema } from "../validation/driver-id.schema.js";
@@ -14,6 +14,7 @@ import { saveDriverLocation } from "../repositories/driver-location.repository.j
 import { nearbyDriversSchema } from "../validation/nearby-drivers.schema.js";
 import { findNearbyDriverIds } from "../repositories/driver-location.repository.js";
 import { findAvailableDriversByIds } from "../repositories/driver.repository.js";
+import { updateDriverSchema } from "../validation/driver-update.schema.js";
 
 const router = Router();
 
@@ -43,6 +44,42 @@ router.post("/", async (req, res) => {
   const driver = await createDriver(validation.data);
 
   return res.status(201).json({ data: driver });
+});
+
+//* PATCH /drivers/:id — update driver details
+router.patch("/:id", async (req, res) => {
+  const idValidation = driverIdSchema.safeParse(req.params.id);
+
+  if (!idValidation.success) {
+    return res.status(400).json({
+      error: "Invalid driver ID",
+    });
+  }
+
+  const validation = updateDriverSchema.safeParse(req.body);
+
+  if (!validation.success) {
+    return res.status(400).json({
+      error: "Validation failed",
+      details: validation.error.issues.map((issue) => ({
+        field: issue.path.join("."),
+        message: issue.message,
+      })),
+    });
+  }
+
+  const driver = await updateDriverDetails(idValidation.data, validation.data);
+
+  if (!driver) {
+    return res.status(404).json({
+      error: "Driver not found",
+    });
+  }
+
+  return res.status(200).json({
+    message: "Driver details updated successfully",
+    data: driver,
+  });
 });
 
 router.patch("/:id/status", async (req, res) => {

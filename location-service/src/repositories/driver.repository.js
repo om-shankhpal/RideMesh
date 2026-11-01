@@ -124,3 +124,30 @@ export async function findAvailableDriversByIds(driverIds) {
     .map((driverId) => driversById.get(driverId))
     .filter(Boolean);
 }
+
+export async function updateDriverDetails(
+  driverId,
+  { name, vehicleType },
+) {
+  const query = `
+    UPDATE drivers
+    SET
+      name = $1,
+      vehicle_type = $2,
+      updated_at = NOW()
+    WHERE id = $3
+    RETURNING
+      id,
+      name,
+      vehicle_type,
+      status,
+      created_at,
+      updated_at
+  `;
+
+  const values = [name, vehicleType, driverId];
+
+  const result = await pool.query(query, values);
+
+  return result.rows[0] ?? null;
+}
