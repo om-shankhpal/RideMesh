@@ -9,16 +9,16 @@ The project focuses on backend engineering problems rather than user registratio
 ## Dashboard Preview
 
 ### Overview
-![RideMesh overview dashboard](docs/screenshots/overview.png)
+![RideMesh overview dashboard](/screenshots/overview.png)
 
 ### Live simulation
-![RideMesh live simulation dashboard](docs/screenshots/live-simulation.png)
+![RideMesh live simulation dashboard](/screenshots/live-simulation.png)
 
 ### Rides
-![RideMesh rides management page](docs/screenshots/rides.png)
+![RideMesh rides management page](/screenshots/rides.png)
 
 ### Drivers
-![RideMesh driver management page](docs/screenshots/drivers.png)
+![RideMesh driver management page](/screenshots/drivers.png)
 
 ## Architecture
 
