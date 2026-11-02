@@ -53,15 +53,18 @@ export const api = {
   getDriver: (id) =>
     request(API_BASES.location, `/drivers/${encodeURIComponent(id)}`),
 
+  getDriverLocation: (id) =>
+    request(API_BASES.location, `/drivers/${encodeURIComponent(id)}/location`),
+
   updateDriver: (id, driver) =>
-  request(
-    API_BASES.location,
-    `/drivers/${encodeURIComponent(id)}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify(driver),
-    }
-  ),
+    request(
+      API_BASES.location,
+      `/drivers/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(driver),
+      }
+    ),
   
   updateDriverLocation: (id, location) =>
     request(API_BASES.location, `/drivers/${encodeURIComponent(id)}/location`, {

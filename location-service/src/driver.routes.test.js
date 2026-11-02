@@ -474,6 +474,55 @@ describe("GET /drivers/nearby", () => {
   });
 });
 
+describe("GET /drivers/:id/location", () => {
+  it("returns driver location when location is saved", async () => {
+    let driverId;
+    try {
+      const createResponse = await request(app).post("/drivers").send({
+        name: "Location Test Driver",
+        vehicleType: "CAR",
+      });
+      driverId = createResponse.body.data.id;
+
+      await request(app)
+        .patch(`/drivers/${driverId}/location`)
+        .send({ latitude: 19.076, longitude: 72.8777 });
+
+      const response = await request(app).get(`/drivers/${driverId}/location`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.driverId).toBe(driverId);
+      expect(response.body.data.latitude).toBeCloseTo(19.076, 3);
+      expect(response.body.data.longitude).toBeCloseTo(72.8777, 3);
+    } finally {
+      if (driverId) {
+        await redisClient.zRem("drivers:geo", driverId);
+        await pool.query("DELETE FROM drivers WHERE id = $1", [driverId]);
+      }
+    }
+  });
+
+  it("returns 404 when location is not set", async () => {
+    let driverId;
+    try {
+      const createResponse = await request(app).post("/drivers").send({
+        name: "No Location Driver",
+        vehicleType: "BIKE",
+      });
+      driverId = createResponse.body.data.id;
+
+      const response = await request(app).get(`/drivers/${driverId}/location`);
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toBe("Driver location not found");
+    } finally {
+      if (driverId) {
+        await pool.query("DELETE FROM drivers WHERE id = $1", [driverId]);
+      }
+    }
+  });
+});
+
 beforeAll(async () => {
   await connectRedis();
 });

@@ -1,0 +1,29 @@
+{
+  "name": "ridemesh",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-time distributed ride-matching and dispatch simulation platform built with microservices architecture",
+  "type": "module",
+  "scripts": {
+    "test": "npm --prefix location-service test && npm --prefix ride-service test && npm --prefix match-service test",
+    "test:location": "npm --prefix location-service test",
+    "test:ride": "npm --prefix ride-service test",
+    "test:match": "npm --prefix match-service test",
+    "lint": "npm --prefix frontend run lint",
+    "build": "npm --prefix frontend run build"
+  },
+  "keywords": [
+    "microservices",
+    "distributed-systems",
+    "ride-matching",
+    "redis-geospatial",
+    "postgresql",
+    "transactional-outbox",
+    "concurrency-control",
+    "react",
+    "leaflet"
+  ],
+  "author": "RideMesh Engineering",
+  "license": "ISC"
+}
+
