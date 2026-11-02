@@ -147,12 +147,11 @@ ride-matching-system/
 │       ├── services/
 │       ├── workers/
 │       └── server.js
-└── docs/
-    └── screenshots/
-        ├── overview.png
-        ├── live-simulation.png
-        ├── rides.png
-        └── drivers.png
+└── screenshots/
+    ├── overview.png
+    ├── live-simulation.png
+    ├── rides.png
+    └── drivers.png
 ```
 
 ## API overview
