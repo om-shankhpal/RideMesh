@@ -1,186 +1,208 @@
 # RideMesh — Distributed Real-Time Ride Matching & Dispatch Platform
 
-RideMesh is a high-concurrency ride-matching and dispatch simulation platform engineered with a microservices architecture. It simulates the core operational backend of a modern ride-hailing application (e.g. Uber, Lyft), demonstrating distributed consensus, geospatial driver discovery with Redis Geospatial indexes, transactional outbox pattern event synchronization, and strict concurrency isolation preventing double-assignment of drivers.
+RideMesh is a high-concurrency ride-matching and dispatch **simulation platform** built with a microservices architecture. It models core ride-hailing operations: geospatial driver discovery, concurrent ride dispatch, lifecycle management, and asynchronous driver-state synchronization.
 
----
+The project focuses on backend engineering problems rather than user registration or payments: **preventing double assignment, maintaining state consistency across services, and finding nearby available drivers efficiently.**
 
-## Architecture Overview
+> **Local demo:** RideMesh is designed to run locally. It is not currently deployed. The screenshots below show the working operations dashboard and its main workflows.
 
-RideMesh is organized into three decoupled microservices communicating via REST and asynchronous transactional outbox patterns, fronted by a modern React operations dashboard.
+## Dashboard Preview
+
+### Overview
+![RideMesh overview dashboard](docs/screenshots/overview.png)
+
+### Live simulation
+![RideMesh live simulation dashboard](docs/screenshots/live-simulation.png)
+
+### Rides
+![RideMesh rides management page](docs/screenshots/rides.png)
+
+### Drivers
+![RideMesh driver management page](docs/screenshots/drivers.png)
+
+## Architecture
+
+RideMesh consists of three backend microservices, a React operations dashboard, PostgreSQL, and Redis.
 
 ```mermaid
 flowchart TD
-    subgraph Client ["Frontend Operations Console"]
+    subgraph Client["Frontend Operations Console"]
         UI["React 19 Dashboard<br/>(React Leaflet, Vite :5173)"]
     end
-
-    subgraph Gateway ["Vite Reverse Proxy (/api/*)"]
+    subgraph Gateway["Vite Reverse Proxy (/api/*)"]
         Proxy["Vite Proxy Layer"]
     end
-
-    subgraph Microservices ["Backend Microservices"]
-        LS["Location Service (:3001)<br/>Express 5, Zod"]
-        RS["Ride Service (:3002)<br/>Express 5, Zod, Outbox Worker"]
-        MS["Match Service (:3003)<br/>Express 5, Zod Orchestration"]
+    subgraph Services["Backend Microservices"]
+        LS["Location Service :3001<br/>Express 5, Zod"]
+        RS["Ride Service :3002<br/>Express 5, Zod, Outbox Worker"]
+        MS["Match Service :3003<br/>Express 5, Zod"]
     end
-
-    subgraph DataStores ["Data & State Stores"]
-        LDB[("PostgreSQL: location_db<br/>drivers table")]
-        RDB[("PostgreSQL: ride_db<br/>rides table & outbox_events")]
-        RCACHE[("Redis 7<br/>drivers:geo Geospatial Index")]
+    subgraph Stores["Data & State Stores"]
+        LDB[("PostgreSQL: location_db<br/>drivers")]
+        RDB[("PostgreSQL: ride_db<br/>rides, outbox_events")]
+        Redis[("Redis 7<br/>drivers:geo")]
     end
-
     UI --> Proxy
     Proxy -->|/api/location| LS
     Proxy -->|/api/rides| RS
     Proxy -->|/api/matches| MS
-
-    MS -->|GET /drivers/nearby| LS
-    MS -->|PATCH /rides/:id/assign| RS
-
+    MS -->|Nearby driver lookup| LS
+    MS -->|Driver assignment| RS
     LS --> LDB
-    LS -->|GEOADD / GEOSEARCH / GEOPOS| RCACHE
-
-    RS -->|Pessimistic Lock & Outbox| RDB
-    RS -.->|Async Outbox Worker<br/>PATCH /drivers/:id/status| LS
+    LS -->|GEOADD / GEOSEARCH| Redis
+    RS -->|Transactions + outbox| RDB
+    RS -.->|Async driver status updates| LS
 ```
 
-### Key Concurrency & Consistency Guarantees
+### Service responsibilities
 
-1. **Strict Single-Driver Assignment Isolation**:
-   - Guaranteed at the database level by PostgreSQL partial unique index:
-     ```sql
-     CREATE UNIQUE INDEX idx_rides_unique_active_driver ON rides (driver_id)
-     WHERE driver_id IS NOT NULL AND status IN ('MATCHED', 'IN_PROGRESS');
-     ```
-   - Enforced transactionally in `ride-service` using `SELECT ... FOR UPDATE` row locks.
-   - Any concurrent attempt to match or assign the same driver receives an immediate `409 Conflict`.
+| Service | Port | Responsibility |
+|---|---:|---|
+| Location Service | 3001 | Driver records, operational status, GPS coordinates, and nearby-driver search |
+| Ride Service | 3002 | Ride creation, lifecycle transitions, transactional assignment, and outbox event processing |
+| Match Service | 3003 | Dispatch orchestration: find nearby available drivers and attempt assignment |
+| Frontend | 5173 | Operations dashboard, map, ride/driver management, and simulation controls |
 
-2. **Transactional Outbox Pattern**:
-   - State changes in `ride-service` (e.g. ride matched, trip completed, ride cancelled) write events to an `outbox_events` table in the same ACID transaction as the ride update.
-   - An independent outbox worker periodically polls and delivers state updates (`DRIVER_STATUS_UPDATE`) to `location-service` with retry tracking and idempotent execution.
+## Key engineering concepts
 
-3. **Geospatial Proximity Matching**:
-   - `location-service` indexes active driver locations in Redis using `GEOADD drivers:geo`.
-   - `match-service` queries `GET /drivers/nearby?latitude=...&longitude=...&radius=...` which executes `GEOSEARCH` in Redis sorted in ascending distance order, intersecting with PostgreSQL to ensure only currently `AVAILABLE` drivers are returned.
+### 1. Concurrency-safe driver assignment
 
----
+Ride assignment is protected at multiple levels:
 
-## Technology Stack
+- PostgreSQL transaction and `SELECT ... FOR UPDATE` row locking.
+- A partial unique index prevents one driver from being assigned to multiple active rides.
 
-- **Backend Runtime**: Node.js (ES Modules, Node 20+)
-- **Web Framework**: Express.js 5
-- **Databases**:
-  - PostgreSQL 16 (Relational persistence, ACID transactions, partial unique constraints)
-  - Redis 7 (In-memory geospatial indexing via `GEOADD`, `GEOSEARCH`, `GEOPOS`)
-- **Validation**: Zod
-- **Testing**: Vitest & Supertest
-- **Frontend**:
-  - React 19
-  - Vite 8
-  - React Leaflet & Leaflet (OpenStreetMap tile rendering)
-  - CSS Custom Properties (Dark glassmorphic operations console)
-- **Infrastructure**: Docker & Docker Compose
-
----
-
-## Repository Structure
-
+```sql
+CREATE UNIQUE INDEX idx_rides_unique_active_driver
+ON rides (driver_id)
+WHERE driver_id IS NOT NULL
+  AND status IN ('MATCHED', 'IN_PROGRESS');
 ```
+
+- Conflicting concurrent assignments are rejected rather than silently double-booked.
+
+### 2. Transactional outbox pattern
+
+Ride state changes and corresponding outbox events are written in the same database transaction. A background worker polls pending events and calls the Location Service to synchronize driver status.
+
+This supports eventual consistency between the Ride Service database and the driver's operational state, with retry tracking for failed delivery.
+
+### 3. Redis geospatial driver discovery
+
+The Location Service stores driver coordinates in the Redis geospatial index `drivers:geo`. Nearby-driver queries use Redis geospatial search and then verify availability against PostgreSQL so stale geo entries do not make unavailable drivers eligible for dispatch.
+
+### 4. Ride lifecycle
+
+The supported ride states are:
+
+`REQUESTED → MATCHED → IN_PROGRESS → COMPLETED`
+
+A ride may also transition to `CANCELLED` where allowed by the service's lifecycle rules. Completing or cancelling an assigned ride emits an outbox event to release the driver.
+
+## Technology stack
+
+| Area | Technologies |
+|---|---|
+| Runtime | Node.js (ES Modules) |
+| Backend | Express 5 |
+| Validation | Zod |
+| Database | PostgreSQL 16 |
+| Geospatial/cache | Redis 7 |
+| Frontend | React 19, Vite 8 |
+| Map | React Leaflet, Leaflet, OpenStreetMap tiles |
+| Testing | Vitest, Supertest |
+| Infrastructure | Docker, Docker Compose |
+
+## Repository structure
+
+```text
 ride-matching-system/
 ├── docker/
-│   └── init-db.sql                 # Automated database initialization script
-├── docker-compose.yml              # Complete container orchestration
-├── frontend/                       # React 19 operational dashboard
-│   ├── src/
-│   │   ├── api/
-│   │   │   ├── client.js           # Consolidated API client
-│   │   │   └── health.js           # Microservices health monitoring
-│   │   ├── App.jsx                 # Main application UI & page components
-│   │   ├── App.css                 # Dispatch console styling
-│   │   └── constants.js            # Preset Mumbai routes, locations & simulated riders
-│   ├── vite.config.js              # Reverse proxy routes (/api/*)
-│   └── package.json
-├── location-service/               # Fleet & geospatial driver management
-│   ├── src/
-│   │   ├── config/                 # PostgreSQL & Redis connections
-│   │   ├── repositories/           # Driver and Redis geo repositories
-│   │   ├── routes/                 # REST endpoints
-│   │   ├── validation/             # Zod input schemas
-│   │   ├── server.js
-│   │   └── driver.routes.test.js   # Vitest suite (25 tests)
-│   ├── .env.example
-│   └── package.json
-├── match-service/                  # Dispatch orchestration service
-│   ├── src/
-│   │   ├── clients/                # HTTP clients for Location & Ride services
-│   │   ├── routes/                 # Match REST endpoints
-│   │   ├── services/               # Matching logic & conflict handling
-│   │   ├── server.js
-│   │   └── tests/                  # Vitest suite (16 tests)
-│   ├── .env.example
-│   └── package.json
-├── ride-service/                   # Ride lifecycle & transactional outbox
-│   ├── src/
-│   │   ├── config/                 # Database pool connection
-│   │   ├── repositories/           # Ride & Outbox repositories
-│   │   ├── routes/                 # Ride lifecycle routes
-│   │   ├── services/               # Outbox event processor
-│   │   ├── workers/                # Background outbox worker
-│   │   ├── server.js
-│   │   └── ride.routes.test.js     # Vitest suite (23 tests)
-│   ├── .env.example
-│   └── package.json
-└── package.json                    # Workspace root scripts
+│   └── init-db.sql
+├── docker-compose.yml
+├── frontend/
+│   └── src/
+│       ├── api/
+│       ├── App.jsx
+│       ├── App.css
+│       └── constants.js
+├── location-service/
+│   └── src/
+│       ├── config/
+│       ├── repositories/
+│       ├── routes/
+│       ├── validation/
+│       └── server.js
+├── match-service/
+│   └── src/
+│       ├── clients/
+│       ├── routes/
+│       ├── services/
+│       └── server.js
+├── ride-service/
+│   └── src/
+│       ├── config/
+│       ├── repositories/
+│       ├── routes/
+│       ├── services/
+│       ├── workers/
+│       └── server.js
+└── docs/
+    └── screenshots/
+        ├── overview.png
+        ├── live-simulation.png
+        ├── rides.png
+        └── drivers.png
 ```
 
----
+## API overview
 
-## Microservice Responsibilities & API Endpoints
+All services expose a `/health` endpoint.
 
-### 1. Location Service (Port 3001)
+### Location Service — `:3001`
 
-Manages fleet registration, vehicle classification, driver operational states, and Redis geospatial coordinates.
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/drivers` | List drivers |
+| POST | `/drivers` | Create a driver |
+| GET | `/drivers/:id` | Get driver details |
+| PATCH | `/drivers/:id` | Edit driver name or vehicle type |
+| PATCH | `/drivers/:id/status` | Update driver status |
+| GET | `/drivers/:id/location` | Get driver's GPS coordinates |
+| PATCH | `/drivers/:id/location` | Update driver's GPS coordinates |
+| GET | `/drivers/nearby` | Find nearby available drivers |
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/health` | Service health status |
-| `GET` | `/drivers` | List all drivers with their Redis location if available |
-| `POST` | `/drivers` | Create driver (`{ name, vehicleType: 'BIKE' \| 'CAR' }`) |
-| `GET` | `/drivers/:id` | Get driver by ID |
-| `PATCH` | `/drivers/:id` | Edit driver name and vehicle type |
-| `PATCH` | `/drivers/:id/status` | Transition status (`OFFLINE` $\leftrightarrow$ `AVAILABLE`, `ON_TRIP`) |
-| `GET` | `/drivers/:id/location` | Retrieve driver's current coordinates from Redis |
-| `PATCH` | `/drivers/:id/location` | Update driver coordinates (`{ latitude, longitude }`) in Redis |
-| `GET` | `/drivers/nearby` | Query nearby available drivers (`latitude, longitude, radius`) |
+### Ride Service — `:3002`
 
-### 2. Ride Service (Port 3002)
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/rides` | List rides |
+| POST | `/rides` | Create a ride |
+| GET | `/rides/:id` | Get ride details |
+| PATCH | `/rides/:id/assign` | Assign a driver |
+| PATCH | `/rides/:id/status` | Advance or cancel a ride |
 
-Manages ride request creation, state machines, driver assignment locks, and transactional outbox event publishing.
+### Match Service — `:3003`
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/health` | Service health status |
-| `GET` | `/rides` | List all rides sorted by creation time |
-| `POST` | `/rides` | Create a ride (`{ riderId, pickupLatitude, pickupLongitude, dropoffLatitude, dropoffLongitude }`) |
-| `GET` | `/rides/:id` | Get ride details |
-| `PATCH` | `/rides/:id/assign` | Assign driver (`MATCHED`) with concurrency lock & outbox event |
-| `PATCH` | `/rides/:id/status` | Update lifecycle state (`IN_PROGRESS`, `COMPLETED`, `CANCELLED`) |
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/matches/:rideId` | Find and assign a nearby available driver |
 
-### 3. Match Service (Port 3003)
+## Run locally
 
-Orchestrates matching by finding candidate drivers near the pickup point and dispatching them with conflict tolerance.
+### Prerequisites
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/health` | Service health status |
-| `POST` | `/matches/:rideId` | Match nearest available driver to requested ride |
+- Node.js 20+
+- PostgreSQL 16+
+- Redis 7+
+- Docker and Docker Compose (for containerized infrastructure)
 
----
+### 1. Configure environment variables
 
-## Environment Variables
+Create the service `.env` files using the corresponding `.env.example` files.
 
-### Location Service (`location-service/.env`)
+Example `location-service/.env`:
+
 ```ini
 PORT=3001
 NODE_ENV=development
@@ -188,7 +210,8 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/location_db
 REDIS_URL=redis://localhost:6379
 ```
 
-### Ride Service (`ride-service/.env`)
+Example `ride-service/.env`:
+
 ```ini
 PORT=3002
 NODE_ENV=development
@@ -197,7 +220,8 @@ REDIS_URL=redis://localhost:6379
 LOCATION_SERVICE_URL=http://localhost:3001
 ```
 
-### Match Service (`match-service/.env`)
+Example `match-service/.env`:
+
 ```ini
 PORT=3003
 NODE_ENV=development
@@ -205,125 +229,105 @@ LOCATION_SERVICE_URL=http://localhost:3001
 RIDE_SERVICE_URL=http://localhost:3002
 ```
 
----
+Use your own local credentials; do not commit `.env` files.
 
-## Setup & Running Instructions
+### 2. Start infrastructure
 
-### Prerequisites
-- Node.js 20+ installed
-- PostgreSQL 16+ running on port `5432`
-- Redis 7+ running on port `6379`
-- *Alternatively*: Docker and Docker Compose
+If using Docker Compose:
 
-### Option A: Using Docker Compose (Recommended for Full Stack)
+```bash
+docker compose up -d
+```
 
-1. Start all containers (Postgres, Redis, 3 Microservices):
-   ```bash
-   docker compose up -d
-   ```
-2. Start the React frontend:
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-3. Open `http://localhost:5173` in your browser.
+If running PostgreSQL and Redis separately, ensure both are available before starting the services.
 
-### Option B: Running Locally
+### 3. Initialize the databases
 
-1. **Install dependencies**:
-   ```bash
-   npm --prefix location-service install
-   npm --prefix ride-service install
-   npm --prefix match-service install
-   npm --prefix frontend install
-   ```
+Ensure the databases `location_db` and `ride_db` exist, then apply the relevant statements from `docker/init-db.sql` to their respective databases. The file also contains setup for `ride_test_db` for automated tests.
 
-2. **Configure databases**:
-   If PostgreSQL is running locally, ensure `location_db` and `ride_db` exist and run `docker/init-db.sql`.
+### 4. Install dependencies
 
-3. **Start the microservices**:
-   - **Terminal 1** (Location Service):
-     ```bash
-     cd location-service && npm start
-     ```
-   - **Terminal 2** (Ride Service):
-     ```bash
-     cd ride-service && npm start
-     ```
-   - **Terminal 3** (Match Service):
-     ```bash
-     cd match-service && npm start
-     ```
-   - **Terminal 4** (Frontend):
-     ```bash
-     cd frontend && npm run dev
-     ```
+From the repository root:
 
-4. **Access the Application**:
-   Navigate to `http://localhost:5173` in your browser.
+```bash
+npm install
+```
 
----
+If the root workspace does not install all packages, install each package using its own `npm install` command.
 
-## Automated Test Suites
+### 5. Start the services
 
-Run the complete test suite across all three microservices in one command from the project root:
+Run each command in a separate terminal:
+
+```bash
+npm --prefix location-service start
+npm --prefix ride-service start
+npm --prefix match-service start
+```
+
+Start the frontend in another terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`.
+
+## Tests
+
+Run the test suites from the repository root:
 
 ```bash
 npm test
 ```
 
-### Running individual service tests:
+Individual suites:
+
 ```bash
-# Location service tests (25 tests)
 npm run test:location
-
-# Ride service tests (23 tests)
 npm run test:ride
-
-# Match service tests (16 tests)
 npm run test:match
+```
 
-# Frontend lint check
+Frontend checks:
+
+```bash
 npm run lint
-
-# Frontend production build
 npm run build
 ```
 
-**Total automated test coverage**: 64 passing tests across 7 test suites with 0 failures.
+The project's documented test baseline is **64 passing tests** across the three backend services (25 Location, 23 Ride, and 16 Match). Re-run the tests in your current checkout before relying on these counts.
 
----
+## Demonstration workflow
 
-## Example Demonstration Workflow
+1. Open **Drivers** and add drivers with a vehicle type.
+2. Set a driver to **AVAILABLE** and assign GPS coordinates using one of the Mumbai presets.
+3. Open **Create Ride**, select a simulated rider, and choose a preset route.
+4. In **Rides**, match the requested ride. The Match Service searches for nearby available drivers.
+5. Start the matched trip, then complete or cancel it.
+6. Observe the outbox worker synchronize the driver's status back to **AVAILABLE**.
+7. In **Live simulation**, run the concurrent dispatch test to demonstrate that two rides competing for one driver cannot both claim that driver.
 
-1. **Fleet Initialization**:
-   - Open the **Drivers** tab.
-   - Click **+ Add driver** to create a driver (e.g., "Rajesh Kumar", Vehicle: CAR).
-   - Click **Go Online (AVAILABLE)** to set their status to ready.
-   - Click **Set GPS** and pick a Mumbai landmark (e.g. Bandra West `19.0600, 72.8340`).
-2. **Ride Creation**:
-   - Navigate to the **Overview** tab.
-   - Click **＋ Create ride**.
-   - Select a simulated rider (e.g. "Aarav Sharma") and choose the preset route **Bandra West → BKC**.
-   - Click **Create ride**. The ride appears in the Recent Requests table with status `REQUESTED`.
-3. **Dispatch & Matching**:
-   - Switch to the **Rides** tab.
-   - Click **Match driver** on the requested ride.
-   - Match Service automatically queries nearby drivers in Redis within search radius, locates Rajesh Kumar, and assigns them.
-   - Ride status advances to `MATCHED` and the driver's status automatically updates to `ON_TRIP` via the Transactional Outbox worker.
-4. **Trip Execution**:
-   - Click **Start ride** $\rightarrow$ status becomes `IN_PROGRESS`.
-   - Click **Complete ride** $\rightarrow$ status becomes `COMPLETED`.
-   - Within 5 seconds, the Outbox worker automatically releases the driver, resetting their status back to `AVAILABLE`.
-5. **Live Simulation & Concurrency Test**:
-   - Open the **Live simulation** tab.
-   - Click **Test Concurrent Dispatch** to dispatch two simultaneous ride requests against one single available driver.
-   - Watch the platform succeed on Ride 1 (HTTP 200) and safely block Ride 2 (HTTP 409 Conflict), demonstrating database-level race condition prevention.
+## Known scope and limitations
 
----
+- This is a **simulation platform**, not a production ride-hailing service.
+- Rider identities are simulated; there is no public rider registration or authentication flow.
+- The geographic demo data is tailored to Mumbai, India.
+- The project is intended to be demonstrated locally; no public deployment is currently provided.
 
-## Known Limitations
+## Future improvements
 
-- **Simulated Rider Accounts**: Predefined simulated rider UUIDs are used for deterministic client testing rather than a public user registration and authentication flow.
-- **Geographic Scope**: Geocoded presets and schematic layouts are tailored to Mumbai, India (approximate latitude `18.9` to `19.2`, longitude `72.8` to `72.9`).
+- Add authentication and role-based access for operations users.
+- Add observability with structured logs, metrics, and distributed tracing.
+- Add automated end-to-end tests covering the complete frontend-to-service workflow.
+- Add production deployment configuration and managed infrastructure when hosting resources are available.
+
+## Author
+
+**Om Shankhpal**  
+Java Backend Engineer · MERN Stack Developer
+
+- GitHub: [om-shankhpal](https://github.com/om-shankhpal)
+- LinkedIn: [Om Shankhpal](https://www.linkedin.com/in/om-shankhpal-089822320/)
